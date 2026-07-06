@@ -1,0 +1,1 @@
+Companion to the *A3PS Implementation Guide*. Part 1 is the definitive phase flow as actually scoped (Nexar-only, pretrained perception, Kalman core + LSTM stretch, offline processing + playback demo). Part 2 is the plan for the two research papers.
