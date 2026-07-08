@@ -1,0 +1,23 @@
+# Datasets and generated artifacts
+data/
+outputs/
+dashboard/clips/
+
+# Model weights
+*.pt
+
+# Virtual environments
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

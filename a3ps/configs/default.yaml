@@ -1,0 +1,52 @@
+# a3ps default pipeline configuration
+model_name: yolov8s-seg.pt
+tracker: botsort.yaml
+classes:
+  - person
+  - bicycle
+  - car
+  - motorcycle
+  - bus
+  - truck
+conf: 0.35
+img_size: 1280
+process_fps: 30
+predict_hz: 5
+horizon_s: 4.0
+history_s: 2.0
+base_threshold: 0.75
+caution_threshold: 0.4
+mask_poly_max_points: 40
+
+# Ego corridor: a fixed trapezoid over the lower-center of the frame, given as
+# fractions of frame width (x) and height (y). Order: bottom-left, bottom-right,
+# top-right, top-left.
+ego_corridor:
+  bottom_y_frac: 1.00
+  top_y_frac: 0.60
+  bottom_left_frac: 0.39
+  bottom_right_frac: 0.61
+  top_left_frac: 0.48
+  top_right_frac: 0.52
+
+# Forecast in bird's-eye-view metres ("bev") or image pixels ("img").
+# Default "img" until the ground plane is calibrated per clip (Week 4 demo
+# clips get a ground_plane_override). BEV code path stays fully supported.
+forecast_space: img
+
+# Ground-plane calibration: 4 image points (fractions of width/height) mapped
+# to ground coordinates in metres. Order: bottom-left, bottom-right, top-right,
+# top-left. Lane 3.6 m wide (x in [-1.8, 1.8]) at 0 m and 25 m ahead.
+# Tweak per clip via an override file (JSON/YAML) named in ground_plane_override.
+ground_plane:
+  image_points_frac:
+    - [0.30, 1.00]
+    - [0.70, 1.00]
+    - [0.55, 0.62]
+    - [0.45, 0.62]
+  ground_points_m:
+    - [-1.8, 0.0]
+    - [1.8, 0.0]
+    - [1.8, 25.0]
+    - [-1.8, 25.0]
+# ground_plane_override: null   # e.g. dashboard/clips/<clip>/ground.yaml

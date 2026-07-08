@@ -1,0 +1,19 @@
+# Core
+numpy>=1.24
+opencv-python>=4.8
+pyyaml>=6.0
+
+# Perception + tracking
+ultralytics>=8.1        # YOLOv8-Seg + BoT-SORT
+torch>=2.1
+torchvision>=0.16
+
+# Risk / math
+scipy>=1.11
+
+# Explanation (STRETCH)
+anthropic>=0.39
+httpx>=0.27
+
+# Tooling / tests
+pytest>=7.4

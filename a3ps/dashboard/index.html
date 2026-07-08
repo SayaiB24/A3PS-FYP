@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>A3PS — Agentic Accident Anticipation &amp; Prevention</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>A3PS <span class="sub">— Agentic Accident Anticipation &amp; Prevention</span></h1>
+    <label class="clip-picker">clip
+      <select id="clip-select"><option value="">…</option></select>
+    </label>
+    <fieldset class="layers">
+      <span class="gear">⚙ layers</span>
+      <label><input type="checkbox" id="layer-masks" checked /> masks</label>
+      <label><input type="checkbox" id="layer-trails" checked /> trails</label>
+      <label><input type="checkbox" id="layer-predictions" checked /> predictions</label>
+      <label><input type="checkbox" id="layer-corridor" checked /> corridor</label>
+    </fieldset>
+    <span id="debug" class="debug">frame –</span>
+  </header>
+
+  <main>
+    <section class="stage">
+      <video id="video" playsinline></video>
+      <canvas id="overlay"></canvas>
+      <div id="vignette" class="vignette hidden"></div>
+      <div id="banner" class="banner hidden"><span id="banner-text">VIRTUAL BRAKING — TTC – s</span></div>
+    </section>
+
+    <aside class="console">
+      <h2>AGENT CONSOLE</h2>
+
+      <section class="panel">
+        <h3>Top threats</h3>
+        <ul id="threats" class="threats"><li class="empty">—</li></ul>
+      </section>
+
+      <div id="threshold" class="threshold">Threshold: –</div>
+
+      <section class="panel grow">
+        <h3>Event log</h3>
+        <ul id="event-log" class="event-log"><li class="empty">no events</li></ul>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="timeline">
+    <div class="timeline-head">
+      <span>RISK TIMELINE</span>
+      <span id="gap-label" class="gap-label"></span>
+    </div>
+    <canvas id="risk-timeline"></canvas>
+    <div class="controls">
+      <button id="btn-back" title="back 1s">◀◀</button>
+      <button id="btn-play" title="play/pause">▶</button>
+      <button id="btn-fwd" title="forward 1s">▶▶</button>
+      <input type="range" id="scrubber" min="0" max="1000" value="0" step="1" />
+      <span id="time-readout" class="time-readout">0.00 / 0.00 s</span>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

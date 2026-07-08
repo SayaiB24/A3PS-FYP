@@ -1,0 +1,67 @@
+{
+  "meta": {
+    "clip_id": "ped_crossing_01",
+    "source_video": "raw.mp4",
+    "fps": 30.0,
+    "width": 1280,
+    "height": 720,
+    "processed_at": "2026-07-10T14:00:00",
+    "config": {
+      "model": "yolov8s-seg",
+      "forecaster": "kalman_cv",
+      "base_threshold": 0.75,
+      "horizon_s": 4.0
+    }
+  },
+  "frames": [
+    {
+      "frame_idx": 142,
+      "t": 4.733,
+      "tracks": [
+        {
+          "id": 4,
+          "cls": "person",
+          "bbox": [612, 300, 668, 420],
+          "centroid_img": [640, 410],
+          "centroid_bev": [1.8, 14.2],
+          "velocity_bev": [1.1, -0.2],
+          "mask_poly": [[612, 300], [668, 300], [668, 420], [612, 420]],
+          "history_img": [[630, 412], [634, 411], [638, 410]],
+          "prediction": {
+            "horizon_s": 4.0,
+            "dt": 0.2,
+            "mean_img": [[642, 409], [646, 407]],
+            "mean_bev": [[1.9, 13.9], [2.0, 13.6]],
+            "std_bev": [[0.3, 0.3], [0.5, 0.5]],
+            "collision_prob": 0.81,
+            "ttc_s": 1.2
+          },
+          "risk_level": "danger"
+        }
+      ],
+      "ego": {
+        "corridor_poly_img": [[500, 720], [780, 720], [660, 430], [620, 430]],
+        "speed_note": "unknown"
+      },
+      "context": {
+        "flags": ["crosswalk_ahead"],
+        "active_threshold": 0.65
+      }
+    }
+  ],
+  "events": [
+    {
+      "event_id": 1,
+      "frame_idx": 142,
+      "t": 4.733,
+      "type": "VIRTUAL_BRAKE",
+      "actor_id": 4,
+      "actor_cls": "person",
+      "collision_prob": 0.81,
+      "threshold": 0.65,
+      "ttc_s": 1.2,
+      "explanation_template": "Virtual braking: pedestrian ID-4 trajectory crossing ego path in 1.2 s (P=0.81, threshold 0.65 due to crosswalk ahead).",
+      "explanation_llm": null
+    }
+  ]
+}
