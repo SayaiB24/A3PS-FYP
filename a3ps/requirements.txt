@@ -2,14 +2,19 @@
 numpy>=1.24
 opencv-python>=4.8
 pyyaml>=6.0
+openpyxl>=3.1           # reads the Nexar labels.xlsx (id/time_of_event/target)
 
 # Perception + tracking
-ultralytics>=8.1        # YOLOv8-Seg + BoT-SORT
-torch>=2.1
+ultralytics>=8.1        # YOLOv8-Seg + BoT-SORT (pulls in `lap` for BoT-SORT assoc.)
+torch>=2.1               # On the GPU laptop: install the CUDA build FIRST, see README/GPU_HANDOFF.md
 torchvision>=0.16
 
-# Risk / math
+# Forecasting / risk / math
+filterpy>=1.4            # KalmanCVForecaster
 scipy>=1.11
+
+# Mining / eval plots
+matplotlib>=3.8          # scripts/mine_trajectories.py --plot, notebook loss curves
 
 # Explanation (STRETCH)
 anthropic>=0.39

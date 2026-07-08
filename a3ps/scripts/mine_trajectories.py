@@ -276,7 +276,9 @@ def save_shard(out_dir, clip_id, windows):
 # ---------------------------------------------------------------------------
 
 def _resolve_clip_path(index_csv, rel_path):
-    base = os.path.dirname(os.path.dirname(os.path.abspath(index_csv)))  # -> data/
+    # index.csv `path` is relative to the directory containing index.csv
+    # (prepare_nexar uses start=<root>), e.g. data/nexar/ + videos/00584.mp4.
+    base = os.path.dirname(os.path.abspath(index_csv))
     return os.path.normpath(os.path.join(base, *rel_path.split("/")))
 
 

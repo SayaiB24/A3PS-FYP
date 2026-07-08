@@ -2,46 +2,36 @@
 
 ## Data: feed in the actual Nexar dataset
 
-The pipeline currently runs on placeholder/fake data and a single test clip.
-Before real evaluation, populate `data/nexar/` with the actual dataset.
+Nexar clips are labelled by an Excel (`id, time_of_event, time_of_alert, target`),
+not by folder. Upload a FLAT pool of clips + the Excel; `prepare_nexar.py` reads
+`target` for the label and computes the dev/eval/train_traj splits.
 
-**Where to put it**
+**Where to put it (input — do NOT pre-sort by class or split)**
 
 ```
 data/nexar/
-├── positive/          # collision / near-collision clips   -> label 1
-│   └── *.mp4
-├── negative/          # normal-driving clips                -> label 0
-│   └── *.mp4
-└── <annotation file>  # OPTIONAL .csv/.json with per-clip event times (positives)
+├── videos/            # ALL clips, flat, original id filenames (e.g. 00042.mp4)
+└── labels.xlsx        # the Excel (drop both if you have train + test Excels)
 ```
 
-- Videos: any of `.mp4 .mov .avi .mkv .webm`; subfolders are fine (walked recursively).
-- Annotation file (optional, positives only): a `.csv`/`.json` in `data/nexar/`.
-  `scripts/prepare_nexar.py` auto-detects an id column (`id`, `clip_id`,
-  `filename`, ...) and an event-time column (`time_of_event`, `event_time_s`,
-  `time_of_alert`, ...). If absent, `event_time_s` is left blank.
+**Counts to upload** (from the Excel `target` column):
+- positives (`target=1`): 65   (5 -> dev, 60 -> eval)
+- negatives (`target=0`): 90   (10 -> dev, 60 -> eval, 20 -> train_traj)
+- minimum viable: 20 pos + 30 neg (fills dev, partial eval)
 
-**Counts needed for full splits**
-
-- negatives: >= 70  (10 for `dev` + 60 for `eval`, rest -> `train_traj`)
-- positives: >= 65  (5 for `dev` + 60 for `eval`)
-
-With fewer, `prepare_nexar.py` clamps split sizes and prints a warning.
-
-**Then run**
+**Then run** (paths can point anywhere; no need to move 30 GB):
 
 ```
 python scripts/prepare_nexar.py --root data/nexar
 ```
 
-Rebuilds `data/nexar/index.csv` and refreshes `data/dev_clips/dev01..devNN.mp4`
-+ `data/dev_clips/README.md`.
+Produces `data/nexar/index.csv` (master: clip_id, path, label, split,
+event_time_s, alert_time_s, fps, w, h) and copies the 15 dev clips into
+`data/dev_clips/` (+ README). eval / train_traj stay as rows in index.csv.
 
-**Cleanup when the real data lands**
-
-- Remove the test copy `data/nexar/negative/02134.mp4` (a duplicate of the
-  dev clip, added only for a smoke test). Left in place for now on purpose.
+- [ ] FIRST: finish `prepare_nexar.py` rewrite — xlsx reader (openpyxl, installed),
+      match videos by `id`, label from `target`. (folder-mode is the old path.)
+- [ ] Remove the smoke-test copy `data/nexar/negative/02134.mp4` if present.
 
 ## Week 4: per-clip BEV calibration for the 5 final demo clips
 When Option 2 becomes worth it: later, in Week 4, when you're preparing your 5 demo clips. At that point you have exactly 5 clips to worry about, and spending 30 minutes each to give them proper metric units for the final demo is a good investment. Do it then, not now.
