@@ -324,6 +324,14 @@ def main():
                    help="Re-mine clips even if a shard for them already exists "
                         "in --out (default: skip already-mined clips, so an "
                         "interrupted run can be resumed by just re-running).")
+    p.add_argument("--conf", type=float, default=None,
+                   help="Override the detector confidence threshold for mining "
+                        "only (does not touch the live pipeline's default.yaml "
+                        "conf). Low-light clips can have almost no detections "
+                        "above the default 0.35 -- e.g. --conf 0.1 recovers "
+                        "many real-but-low-confidence detections there. Not "
+                        "recommended as a global default: raises false-positive "
+                        "risk on well-lit clips.")
     args = p.parse_args()
 
     if args.plot_only:
@@ -332,6 +340,8 @@ def main():
 
     from a3ps.pipeline import load_config
     config = load_config(args.config)
+    if args.conf is not None:
+        config["conf"] = args.conf
     use_bev = config.get("forecast_space", "img") == "bev"
     space = "bev" if use_bev else "img"
     # Static threshold: 1 m in BEV, ~15 px in image space.
@@ -346,7 +356,8 @@ def main():
         rows = rows[:args.limit_clips]
 
     print(f"{args.split} clips: {len(rows)}  space={space}  "
-          f"static_thresh={static_thresh}")
+          f"static_thresh={static_thresh}  conf={config['conf']}"
+          + ("  (overridden)" if args.conf is not None else ""))
     if not rows:
         print(f"No '{args.split}' clips found. Populate data/nexar/ and run "
               "scripts/prepare_nexar.py (see TODO.md). Nothing to mine.")
