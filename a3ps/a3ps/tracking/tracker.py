@@ -140,7 +140,12 @@ class Tracker:
         Populates id, cls, bbox, centroid_img (foot point), mask_poly, and
         history_img. Leaves centroid_bev / velocity_bev / prediction as None.
         """
-        kwargs = dict(
+        # No `half=True` kwarg here: the model is already converted to half
+        # precision once in __init__ (self.model.to("cuda").half()), so
+        # passing it again per-call is redundant and triggers Ultralytics'
+        # "half is deprecated, use quantize" warning on every frame.
+        results = self.model.track(
+            frame,
             persist=True,
             tracker=self.tracker_cfg,
             conf=self.conf,
@@ -149,9 +154,6 @@ class Tracker:
             device=self.device,
             verbose=False,
         )
-        if self.use_half:  # only pass on GPU; passing at all warns on newer ultralytics
-            kwargs["half"] = True
-        results = self.model.track(frame, **kwargs)
         if not results:
             return []
         r = results[0]

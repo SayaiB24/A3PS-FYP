@@ -89,16 +89,18 @@ class Segmenter:
                     mask_poly: [[x,y], ...] simplified}. Empty list if nothing
         is detected.
         """
-        kwargs = dict(
+        # No `half=True` kwarg here: the model is already converted to half
+        # precision once in __init__ (self.model.to("cuda").half()), so
+        # passing it again per-call is redundant and triggers Ultralytics'
+        # "half is deprecated, use quantize" warning on every frame.
+        results = self.model.predict(
+            frame,
             conf=self.conf,
             imgsz=self.img_size,
             classes=self.class_ids or None,
             device=self.device,
             verbose=False,
         )
-        if self.use_half:  # only pass on GPU; passing at all warns on newer ultralytics
-            kwargs["half"] = True
-        results = self.model.predict(frame, **kwargs)
         if not results:
             return []
         r = results[0]
