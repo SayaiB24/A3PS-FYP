@@ -1,6 +1,6 @@
 # a3ps default pipeline configuration
 model_name: yolov8s-seg.pt
-tracker: botsort.yaml
+tracker: configs/botsort_a3ps.yaml   # track_buffer 90 (was 30) -- see file comment
 classes:
   - person
   - bicycle

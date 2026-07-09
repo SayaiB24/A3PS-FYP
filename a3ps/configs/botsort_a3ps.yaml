@@ -1,0 +1,29 @@
+# a3ps BoT-SORT tracker config — same as Ultralytics' stock botsort.yaml
+# except track_buffer, raised from 30 -> 90 frames (~3s at 30fps).
+#
+# Why: on low-light/night clips, per-frame detection confidence flickers
+# around the threshold, causing brief detection dropouts. With the stock
+# 30-frame buffer, a >1s dropout deletes the track and the same physical
+# object gets a NEW id on re-detection, fragmenting one long track into many
+# short ones -- which then all fail mine_trajectories.py's 6s MIN_TRACK_S
+# filter (confirmed: a night clip produced 47 track ids, none longer than
+# 3.5s, all rejected as "short_tracks"). A longer buffer tolerates the same
+# kind of dropout without losing track identity. Safe for daytime clips too
+# -- it only affects behavior during an actual detection gap.
+#
+# Docs: https://docs.ultralytics.com/modes/track
+
+tracker_type: botsort
+track_high_thresh: 0.25
+track_low_thresh: 0.1
+new_track_thresh: 0.25
+track_buffer: 90        # was 30
+match_thresh: 0.8
+fuse_score: True
+
+gmc_method: sparseOptFlow
+
+proximity_thresh: 0.5
+appearance_thresh: 0.8
+with_reid: False
+model: auto
