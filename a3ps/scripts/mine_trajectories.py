@@ -23,6 +23,7 @@ plus an aggregate stats.json.
 
 import argparse
 import csv
+import glob
 import json
 import os
 import random
@@ -275,6 +276,26 @@ def save_shard(out_dir, clip_id, windows):
 # main
 # ---------------------------------------------------------------------------
 
+def _recount_shards(out_dir):
+    """Ground truth (clips, windows) by reading every shard actually on disk.
+
+    Used to self-heal stats.json's cumulative counters: a prior interrupted
+    or buggy run can leave them stale/wrong relative to what's really in
+    --out, and a resumed run that only trusts the counter would never notice.
+    """
+    import numpy as np
+
+    n_clips, n_windows = 0, 0
+    for f in glob.glob(os.path.join(out_dir, "*.npz")):
+        try:
+            with np.load(f) as d:
+                n_windows += len(d["history"])
+            n_clips += 1
+        except Exception:  # noqa: BLE001 - a corrupt shard shouldn't crash the count
+            continue
+    return n_clips, n_windows
+
+
 def _resolve_clip_path(index_csv, rel_path):
     # index.csv `path` is relative to the directory containing index.csv
     # (prepare_nexar uses start=<root>), e.g. data/nexar/ + videos/00584.mp4.
@@ -299,6 +320,10 @@ def main():
                    help="Skip mining; just plot existing shards in --out.")
     p.add_argument("--plot-n", type=int, default=50,
                    help="Number of random windows to plot (default 50).")
+    p.add_argument("--force", action="store_true",
+                   help="Re-mine clips even if a shard for them already exists "
+                        "in --out (default: skip already-mined clips, so an "
+                        "interrupted run can be resumed by just re-running).")
     args = p.parse_args()
 
     if args.plot_only:
@@ -326,16 +351,44 @@ def main():
         print(f"No '{args.split}' clips found. Populate data/nexar/ and run "
               "scripts/prepare_nexar.py (see TODO.md). Nothing to mine.")
 
-    rng = random.Random(SEED)
+    os.makedirs(args.out, exist_ok=True)
+    stats_path = os.path.join(args.out, "stats.json")
+
+    # Resume support: load any existing stats so counts accumulate across
+    # interrupted/re-run sessions instead of resetting to zero each time.
     stats = {
         "space": space, "static_thresh": static_thresh,
         "clips_processed": 0, "total_windows": 0, "class_mix": {},
         "short_tracks": 0, "id_switch_windows": 0,
-        "static_dropped": 0, "static_kept": 0,
+        "static_dropped": 0, "static_kept": 0, "clips_skipped_existing": 0,
     }
+    if os.path.isfile(stats_path):
+        try:
+            with open(stats_path, encoding="utf-8") as fh:
+                prior = json.load(fh)
+            stats.update({k: v for k, v in prior.items() if k in stats})
+            print(f"resuming: loaded prior stats ({stats['clips_processed']} "
+                  f"clips, {stats['total_windows']} windows already recorded)")
+        except (json.JSONDecodeError, OSError):
+            pass
 
+    def checkpoint():
+        # Self-heal clips_processed/total_windows from the actual shards on
+        # disk rather than trusting the running counter, so staleness from a
+        # prior interrupted/buggy run (or manual shard edits) can't persist.
+        n_clips, n_windows = _recount_shards(args.out)
+        stats["clips_processed"] = n_clips
+        stats["total_windows"] = n_windows
+        with open(stats_path, "w", encoding="utf-8") as fh:
+            json.dump(stats, fh, indent=2)
+
+    rng = random.Random(SEED)
     for r in rows:
         clip_id = r["clip_id"]
+        shard_path = os.path.join(args.out, f"{clip_id}.npz")
+        if not args.force and os.path.isfile(shard_path):
+            stats["clips_skipped_existing"] += 1
+            continue
         video = _resolve_clip_path(args.index, r["path"])
         if not os.path.isfile(video):
             print(f"  ! missing video, skipping: {video}")
@@ -344,13 +397,17 @@ def main():
         tracks = track_clip(video, config, use_bev)
         windows = mine_clip(tracks, rng, stats)
         save_shard(args.out, clip_id, windows)
-        stats["clips_processed"] += 1
-        stats["total_windows"] += len(windows)
         print(f"    {len(windows)} windows")
+        checkpoint()          # persist after every clip so nothing is lost
+                               # (also self-heals clips_processed/total_windows)
 
-    os.makedirs(args.out, exist_ok=True)
-    with open(os.path.join(args.out, "stats.json"), "w", encoding="utf-8") as fh:
-        json.dump(stats, fh, indent=2)
+    checkpoint()  # unconditional final write: self-heals even if every clip
+                  # this run was skipped (all already mined) and nothing else
+                  # would have triggered a recount.
+
+    if stats["clips_skipped_existing"]:
+        print(f"skipped {stats['clips_skipped_existing']} already-mined clips "
+              f"(use --force to re-mine them)")
 
     print(f"\nTotal windows mined: {stats['total_windows']} "
           f"from {stats['clips_processed']} clips -> {args.out}")

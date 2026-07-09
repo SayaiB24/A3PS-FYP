@@ -69,6 +69,39 @@ def test_normalize_inverse_recovers_absolute():
     assert np.allclose(recovered, np.asarray(pts), atol=1e-6)
 
 
+def test_recount_shards_reads_ground_truth(tmp_path):
+    # Two shards with known window counts.
+    mt.save_shard(str(tmp_path), "clipA", [
+        {"history": np.zeros((10, 2)), "future": np.zeros((20, 2)),
+         "origin": np.zeros(2), "theta": 0.0, "cls": "car"}
+        for _ in range(5)
+    ])
+    mt.save_shard(str(tmp_path), "clipB", [
+        {"history": np.zeros((10, 2)), "future": np.zeros((20, 2)),
+         "origin": np.zeros(2), "theta": 0.0, "cls": "person"}
+        for _ in range(3)
+    ])
+    n_clips, n_windows = mt._recount_shards(str(tmp_path))
+    assert n_clips == 2
+    assert n_windows == 8
+
+
+def test_recount_shards_empty_dir(tmp_path):
+    assert mt._recount_shards(str(tmp_path)) == (0, 0)
+
+
+def test_recount_ignores_corrupt_shard(tmp_path):
+    mt.save_shard(str(tmp_path), "good", [
+        {"history": np.zeros((10, 2)), "future": np.zeros((20, 2)),
+         "origin": np.zeros(2), "theta": 0.0, "cls": "car"}
+    ])
+    with open(os.path.join(str(tmp_path), "corrupt.npz"), "w") as fh:
+        fh.write("not a real npz file")
+    n_clips, n_windows = mt._recount_shards(str(tmp_path))
+    assert n_clips == 1        # corrupt shard skipped, not counted or crashed
+    assert n_windows == 1
+
+
 def _stats(thresh=1.0):
     return {
         "static_thresh": thresh, "class_mix": {},
