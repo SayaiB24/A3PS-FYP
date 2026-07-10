@@ -16,7 +16,32 @@ horizon_s: 4.0
 history_s: 2.0
 base_threshold: 0.75
 caution_threshold: 0.4
+# Decision state machine (see a3ps/risk/decision.py).
+alert_margin: 0.15        # ALERT fires at (active_threshold - this)
+frames_to_confirm: 3      # consecutive frames a prob must hold to advance a state
+event_cooldown_s: 2.0     # per-actor re-arm cooldown after an event
+threshold_floor: 0.45     # active_threshold never drops below this
+risk_ema_alpha: 0.4       # cross-frame EMA on each track's collision prob
 mask_poly_max_points: 40
+
+# Actor collision radius by class, used to dilate the ego corridor when
+# integrating collision probability (Minkowski sum with a disk). BEV values are
+# physical metres; the pixel values are rough stand-ins used while forecasting
+# in image space (forecast_space="img", no ground plane yet).
+actor_radius_m:
+  person: 0.4
+  bicycle: 0.5
+  motorcycle: 0.6
+  car: 1.0
+  bus: 1.5
+  truck: 1.5
+actor_radius_px:
+  person: 8
+  bicycle: 10
+  motorcycle: 12
+  car: 20
+  bus: 28
+  truck: 28
 
 # Ego corridor: a fixed trapezoid over the lower-center of the frame, given as
 # fractions of frame width (x) and height (y). Order: bottom-left, bottom-right,
