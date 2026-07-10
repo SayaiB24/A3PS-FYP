@@ -93,7 +93,7 @@ config change needed.
 python -m pytest -q
 ```
 Expect `35 passed`. If this fails, fix it before touching data.
-
+---------------------------------------------------------------------------------------------
 Quick real-inference smoke test (downloads `yolov8s-seg.pt` on first run):
 ```powershell
 python -m a3ps.perception.segmenter data\dev_clips\dev01.mp4
@@ -102,8 +102,7 @@ Look at the printed `mean inference: X ms/frame` — on a GPU this should be
 roughly **20-40 ms/frame**, versus ~800-1000 ms/frame on this CPU laptop
 (20-40x speedup). If it's still four digits, CUDA isn't being used — recheck
 step 2.
-
----
+---------------------------------------------------------------------------------------------
 
 ## 4. Copy the data over
 
