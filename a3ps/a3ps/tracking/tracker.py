@@ -144,13 +144,18 @@ class Tracker:
         # precision once in __init__ (self.model.to("cuda").half()), so
         # passing it again per-call is redundant and triggers Ultralytics'
         # "half is deprecated, use quantize" warning on every frame.
+        # NOTE: do NOT pass classes= to model.track(). Filtering detections by
+        # class *inside* the tracker call breaks BoT-SORT's association and
+        # leaves boxes.id None on nearly every frame (observed on dev01:
+        # 10/540 frames got ids with the filter vs 274-327 without it). Track
+        # ALL classes so association stays stable, then keep only the
+        # configured target classes below.
         results = self.model.track(
             frame,
             persist=True,
             tracker=self.tracker_cfg,
             conf=self.conf,
             imgsz=self.img_size,
-            classes=self.class_ids or None,
             device=self.device,
             verbose=False,
         )
@@ -169,6 +174,11 @@ class Tracker:
         for i in range(len(boxes)):
             track_id = int(boxes.id[i].item())
             cls_id = int(boxes.cls[i].item())
+            # Class filter moved out of model.track() (see note above): keep
+            # only the configured target classes, now that tracking has already
+            # associated ids across the full detection set.
+            if self.class_ids and cls_id not in self.class_ids:
+                continue
             x1, y1, x2, y2 = boxes.xyxy[i].tolist()
             bbox = [int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2))]
             foot = self._foot_point(bbox)
