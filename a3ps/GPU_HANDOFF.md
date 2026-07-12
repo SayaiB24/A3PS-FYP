@@ -5,8 +5,7 @@ and unit-tested on CPU** (perception → tracking → forecasting → risk/decis
 → explanation), **63 tests passing**. What's left is entirely *scale* work —
 things that need either a GPU (fast YOLO/tracking inference over many real
 clips) or a lot of real data (trajectory mining, LSTM training, eval over the
-full 120-clip eval split). None of it needs new code.
-
+full 120-clip eval split). None of it needs new code.  
 This laptop (CPU, no GPU) already has real Nexar data on it — **155 labelled
 clips** (65 positive + 90 negative), the 15 dev clips, and one trained-but-tiny
 LSTM checkpoint. The GPU laptop needs that data copied over (it's gitignored,
@@ -27,7 +26,10 @@ gitignored.
 4. Bring **~480-580 more negative clips** (the real bottleneck — see step 4's
    math; positives are already sufficient).
 5. Re-run `prepare_nexar.py` (fast, seconds) — bigger `train_traj` split.
-6. Run `mine_trajectories.py` for real (was stuck at 1/20 clips here).
+6. Resume `mine_trajectories.py` — the GPU laptop has already mined **~93
+   clips**; re-running just skips those and continues with any remaining
+   `train_traj` clips. Check `total_windows` in `stats.json` against the
+   10,000+ target.
 7. Retrain the LSTM (`train_forecaster.ipynb`) on the real mined set — the
    current `notebooks/models/seq2seq_v1.pt` was trained on 22 windows from a
    single clip and should be treated as a placeholder, not a real result.
@@ -154,8 +156,10 @@ positives unless convenient — it's optional and low priority.
 `train_traj`** — the pool trajectory mining draws from. Current `index.csv`
 confirms this exactly: `Counter({'eval': 120, 'train_traj': 20, 'dev': 15})` —
 with 90 negatives total, only `90 - 10 - 60 = 20` are left for `train_traj`.
-That's far too few to hit the 10,000+ mined-window target (mining has only
-actually run against 1 of those 20 clips so far — see step 6).
+That's far too few to hit the 10,000+ mined-window target. (This reflects
+*this* CPU laptop; the GPU laptop already brought more negatives and has mined
+~93 clips — see step 6. Verify its `total_windows` before assuming more
+negatives are still needed.)
 
 **The exact numbers:**
 
@@ -220,23 +224,40 @@ current `20`.
 
 ---
 
-## 6. Run trajectory mining for real
+## 6. Resume trajectory mining
 
-Mining has only actually processed **1 of the 20 `train_traj` clips** so far
-on this laptop (`clips_processed: 1` in `data/trajectories/stats.json`, 22
-windows total — nowhere near the 10,000+ target). On GPU with the bigger
-`train_traj` pool from step 5, this should run in minutes.
+The GPU laptop has already mined **~93 `train_traj` clips** (this CPU laptop
+only ever mined 1 — `clips_processed: 1`, 22 windows in its local
+`data/trajectories/stats.json` — that figure is stale and refers to *this*
+machine, not the GPU one). So mining is largely done; this step is now
+**resume + verify**, not a from-scratch run.
 
+**Re-running resumes automatically** — mining skips any clip whose
+`data/trajectories/<clip_id>.npz` shard already exists (counted as
+`clips_skipped_existing` in stats.json) and only mines the rest. So just
+re-run it and it picks up where it left off:
 ```powershell
 python scripts\mine_trajectories.py --plot
 ```
+`stats.json`'s `clips_processed` / `total_windows` are **self-healed** each
+run by recounting the actual shards on disk, so they reflect the true
+cumulative total (all ~93 + any new ones), not a reset.
 
-If you want a clean start instead of resuming (mining skips clips whose shard
-already exists — `clips_skipped_existing` in stats.json):
-```powershell
-Remove-Item -Recurse -Force data\trajectories
-python scripts\mine_trajectories.py --plot
-```
+Two things to know about resume:
+- **Force a full re-mine** with `--force` (re-processes every clip even if a
+  shard exists), or wipe the dir for a truly clean start:
+  ```powershell
+  Remove-Item -Recurse -Force data\trajectories
+  python scripts\mine_trajectories.py --plot
+  ```
+- A clip that yielded **zero** valid windows writes **no** shard, so it isn't
+  remembered as done and gets re-tracked on every run — harmless, just some
+  repeated work on empty/low-detection clips.
+
+**The one number that matters now:** check `total_windows` in
+`data/trajectories/stats.json` against the **10,000+** target. If it's already
+there, mining is done — go to step 7. If it's short, bring more negatives
+(step 4) and re-run (it'll resume, only mining the new clips).
 
 What to check when it finishes:
 - **Total windows mined** (printed at the end, and in `stats.json`) — target

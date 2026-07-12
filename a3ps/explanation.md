@@ -1082,20 +1082,64 @@ Displacement Error) is that distance at the horizon's last step only.
 forecaster-quality metric right now (mTTA/AP/false-alarm-rate, the
 anticipation-specific metrics, are blocked — see §9,
 `eval_anticipation.py`).
-**Is the value good?** Reported (via chat, not re-verified in this file
-since the artifact wasn't present on this checkout — see §13): Kalman-CV
-ADE@4s = 51.24px, Seq2Seq-LSTM best val ADE (same metric) = 51.64px — a
-near-tie, Kalman marginally ahead. **This is a legitimate, informative
-negative result**, not a failure of the code: it means the LSTM learned to
-approximate constant velocity (which is exactly what Kalman-CV already
-computes in closed form), because the training data (717 car / 50 truck / 5
-person mined windows, per chat) is overwhelmingly linear-motion-dominated
-highway/street driving with almost no turning or pedestrian examples for a
-learned model to exploit an advantage from.
+**Is the value good?** As of the latest run (val = 289 windows, after adding
+~100 more negative clips and retraining), on the *same* held-out split:
+
+| horizon | Kalman-CV ADE | Seq2Seq-LSTM ADE | Kalman FDE | Seq2Seq FDE |
+|---|---|---|---|---|
+| 1 s | **18.21** | 18.85 | **27.93** | 30.67 |
+| 2 s | **31.22** | 32.68 | **55.40** | 56.33 |
+| 4 s | 61.27 | **56.33** | 122.55 | **99.74** |
+
+**The LSTM now beats Kalman-CV at the 4 s horizon** (56.33 vs 61.27 px ADE,
+99.74 vs 122.55 px FDE) and matches it within ~1.5 px at 1–2 s. This reverses
+the earlier near-tie (51.24 vs 51.64 px on a smaller 172-window split): once
+the mining pool grew, the extra nonlinear-motion signal let the learned model
+pull ahead at the long horizon that matters most for anticipation. Short
+horizons still favor Kalman because motion there is near-constant-velocity —
+exactly what the filter computes in closed form, so a learned model can only
+tie it.
 **What affects it:** training-data volume, training-data *diversity*
 (specifically: how much genuinely nonlinear motion — turns, braking,
 pedestrian direction changes — it contains), and the Kalman filter's own
 `meas_var`/`process_var` tuning (§12).
+
+#### 11.1.1 How to evaluate this result — which forecaster is "better"?
+This trips people up, so here is the exact procedure and the reasoning:
+
+1. **Only ever compare on the *same* validation split.** ADE/FDE are absolute
+   pixel errors on whatever windows happen to be in the val set. Enlarge or
+   change the mined pool and the 90/10 split (seed 42) draws *different*
+   windows — so the absolute numbers shift for **both** models at once. A
+   number rising across two runs (e.g. LSTM 51.64 → 56.33) does **not** mean
+   the model got worse; it usually means the new val set is larger/more varied
+   (harder). Proof it's the set, not the model: Kalman rose too (51.24 →
+   61.27) on the same change. **Never compare a model's number from run A
+   against the other model's number from run B.**
+2. **Read the two rows side by side, per horizon.** Run
+   `python scripts\eval_forecast.py --weights notebooks\models\seq2seq_v1.pt`
+   — it prints both models on one shared split and writes
+   `eval/forecast_table.md`. For each of ADE@1s/2s/4s and FDE@1s/2s/4s, the
+   **lower** number wins that cell.
+3. **Weight the horizons by what the system is for.** This is a *collision
+   anticipation* project, so the **4 s** column is the one that matters —
+   predictions must reach far enough ahead to trigger a brake in time. A
+   forecaster that wins at 4 s but loses by ~1 px at 1 s is the better choice
+   *for this task*. By that criterion the LSTM is currently ahead.
+4. **FDE vs ADE.** ADE averages error over the whole horizon (overall path
+   quality); FDE is only the final predicted point (how far off the endpoint
+   is). FDE@4s is the harshest, most decision-relevant single number — the
+   LSTM's biggest win is exactly there (99.74 vs 122.55).
+5. **Sanity-check qualitatively too.** Open the notebook's 12-sample
+   prediction-vs-ground-truth grid. Good predictions track the green
+   ground-truth path in shape and length; a model that always draws short,
+   straight red paths is just relearning constant velocity (= Kalman) and
+   won't beat the baseline no matter what the table says.
+6. **Rule of thumb for the verdict:** *lower ADE/FDE = better; ties (within
+   ~1–2 px) mean "pick the simpler model" (Kalman — no training/GPU/weights);
+   a clear win at the 4 s horizon is decisive for this project.* Today: LSTM
+   for long-horizon accuracy, Kalman as the training-free baseline that still
+   edges it at 1–2 s.
 
 ### 11.2 Unit test results
 `pytest -q` currently reports **38 passed, 0 failed** (verified live, not
@@ -1520,10 +1564,15 @@ step, since there isn't enough data yet to estimate real uncertainty.
 
 **Q: Is the LSTM forecaster (`Seq2SeqForecaster`) actually better than the
 Kalman filter?**
-A: Based on the reported (not re-verified on this checkout — see §13, item
-3) comparison, no — they're a near-tie, with Kalman-CV marginally ahead
-(51.24 vs. 51.64 px ADE@4s). This is attributed to the mined training data
-being overwhelmingly linear-motion car/highway footage. See §11.1 and §12.6.
+A: It depends on the horizon — and as of the latest run (289 val windows), the
+answer flipped. The **LSTM now wins at 4 s** (56.33 vs. 61.27 px ADE, 99.74
+vs. 122.55 px FDE), while Kalman-CV stays marginally ahead at 1–2 s. Since
+this is a collision-anticipation system, the 4 s horizon is the one that
+matters, so the LSTM is currently the better forecaster for the task; Kalman
+remains the simpler, training-free baseline. This reverses the earlier
+near-tie (51.24 vs. 51.64 px), which was measured on a smaller 172-window
+split — see §11.1.1 for exactly how to compare the two and why the absolute
+numbers aren't comparable across runs. See also §11.1 and §12.6.
 
 **Q: Why does mining sometimes seem to "redo" clips I thought were already
 finished?**
