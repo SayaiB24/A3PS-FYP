@@ -14,7 +14,7 @@
   },
   "stages": {
     "forecaster": true,
-    "risk_engine": false,
+    "risk_engine": true,
     "explainer": false
   }
 }
