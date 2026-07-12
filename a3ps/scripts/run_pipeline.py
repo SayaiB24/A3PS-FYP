@@ -17,6 +17,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from a3ps.common.schema import Prediction  # noqa: E402
 from a3ps.forecasting.kalman_cv import KalmanCVForecaster  # noqa: E402
 from a3ps.pipeline import Pipeline, load_config  # noqa: E402
+from a3ps.risk.collision import (  # noqa: E402
+    RiskSmoother,
+    actor_radius_for,
+    trajectory_collision_prob,
+)
+from a3ps.risk.decision import DecisionEngine  # noqa: E402
 
 
 def make_forecaster_hook(config):
@@ -65,6 +71,65 @@ def make_forecaster_hook(config):
     return hook
 
 
+def make_risk_hook(config):
+    """Per-frame risk engine: score collision prob, smooth, run DecisionEngine.
+
+    For each track with a forecast we integrate the collision probability over
+    the predicted trajectory against the ego corridor (dilated by the actor's
+    radius), smooth it across frames with an EMA (so a one-frame glitch cannot
+    fire an event), and store it on ``track.prediction``. Then the
+    :class:`DecisionEngine` turns those probabilities into ALERT / VIRTUAL_BRAKE
+    / THRESHOLD_LOWERED events. Returns the events emitted this frame.
+    """
+    engine = DecisionEngine(config)
+    smoother = RiskSmoother(alpha=float(config.get("risk_ema_alpha", 0.4)))
+    corridor_cache: dict = {}
+
+    def _corridor(ctx):
+        """Ego corridor in the active forecast space (cached; it's constant)."""
+        space = ctx.get("forecast_space", "img")
+        if space not in corridor_cache:
+            poly_img = ctx["ego"]["corridor_poly_img"]
+            ground = ctx.get("ground")
+            if space == "bev" and ground is not None:
+                corridor_cache[space] = ground.img_to_bev(poly_img)
+            else:
+                corridor_cache[space] = poly_img
+        return corridor_cache[space]
+
+    def hook(tracks, ctx):
+        space = ctx.get("forecast_space", "img")
+        corridor = _corridor(ctx)
+        dt = 1.0 / float(config.get("predict_hz", 5))
+
+        # Dashboard reads context.active_threshold to draw the threshold line
+        # and the "lowered due to X" note -- surface it every frame.
+        flags = ctx["context"].get("flags", [])
+        ctx["context"]["active_threshold"] = round(float(engine.active_threshold(flags)), 4)
+
+        for tr in tracks:
+            pred = tr.prediction
+            if pred is None:
+                continue
+            means = pred.mean_bev if space == "bev" else pred.mean_img
+            stds = pred.std_bev
+            if not means or not stds:
+                continue
+            radius = actor_radius_for(tr.cls, config, space=space)
+            max_prob, ttc = trajectory_collision_prob(
+                (means, stds), corridor, radius, dt)
+            smoothed = smoother.update(tr.id, max_prob)
+            pred.collision_prob = round(float(smoothed), 4)
+            pred.ttc_s = ttc
+
+        return engine.update(
+            ctx["frame_idx"], ctx["t"], tracks,
+            context_flags=flags,
+        )
+
+    return hook
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Run the a3ps traffic-safety pipeline.")
     p.add_argument("--video", required=True, help="Input video path.")
@@ -82,11 +147,11 @@ def main() -> None:
         p.error(f"video not found: {args.video}")
 
     config = load_config(args.config)
-    # Phase 3 forecaster is wired in; risk/explainer land in Phases 4-5.
+    # Phases 3-4 wired in (forecaster + risk decision); explainer lands in Phase 5.
     pipeline = Pipeline(
         config,
         forecaster=make_forecaster_hook(config),
-        risk_engine=None,
+        risk_engine=make_risk_hook(config),
         explainer=None,
     )
 

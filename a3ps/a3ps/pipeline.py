@@ -3,11 +3,15 @@
 ``Pipeline(config)`` wires the tracker (Phase 2) and leaves three optional,
 injectable hooks for later phases:
 
-    forecaster(track, ctx) -> Optional[Prediction]   # Phase 3
-    risk_engine(track, ctx) -> Optional[Event]        # Phase 4 (also sets risk_level)
-    explainer(event, ctx)  -> Optional[str]           # Phase 5
+    forecaster(track, ctx)   -> Optional[Prediction]  # Phase 3 (per track)
+    risk_engine(tracks, ctx) -> List[Event]           # Phase 4 (per frame; sets risk_level)
+    explainer(event, ctx)    -> Optional[str]          # Phase 5
 
 Each hook is called only if it was supplied; otherwise that stage is skipped.
+The risk engine is called once per frame with the whole track list (it needs
+the full frame to score context, e.g. dense traffic, and to run a per-actor
+state machine) and returns the events emitted this frame.
+
 ``ctx`` is a dict carrying per-frame state (frame_idx, t, fps, config, ego,
 context, buffer), so Phases 3-5 can plug in without editing this file again.
 """
@@ -23,18 +27,23 @@ import yaml
 
 from a3ps.common.geometry import GroundPlane, load_ground_override
 from a3ps.common.schema import ClipResult, Event, FrameRecord
+from a3ps.explain.templates import explain as template_explain
+from a3ps.risk.decision import active_context_flags, load_context_spans
 from a3ps.tracking.tracker import Tracker
 
-# BGR colors keyed by risk level (grey = safe for now).
+# BGR colors keyed by risk level (green -> amber -> red).
 RISK_COLORS = {
-    "safe": (150, 150, 150),
+    "safe": (0, 180, 0),
     "caution": (0, 180, 255),
     "danger": (0, 0, 255),
 }
 
+# How long the red "virtual brake" border stays lit after a VIRTUAL_BRAKE event.
+BRAKE_FLASH_S = 0.5
+
 # Hook type aliases (documentation only).
 Forecaster = Callable[[Any, Dict[str, Any]], Any]
-RiskEngine = Callable[[Any, Dict[str, Any]], Optional[Event]]
+RiskEngine = Callable[[List[Any], Dict[str, Any]], List[Event]]
 Explainer = Callable[[Event, Dict[str, Any]], Optional[str]]
 
 
@@ -91,7 +100,7 @@ class Pipeline:
 
     # -- rendering ----------------------------------------------------------
 
-    def _draw_frame(self, frame, record: FrameRecord, ego_poly):
+    def _draw_frame(self, frame, record: FrameRecord, ego_poly, brake_flash: bool = False):
         import cv2
         import numpy as np
 
@@ -119,6 +128,14 @@ class Pipeline:
             self._draw_prediction(frame, tr, color)
             cv2.putText(frame, f"{tr.cls} {tr.id}", (x1, max(15, y1 - 5)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+
+        # Red border flash: a virtual-brake intervention just fired.
+        if brake_flash:
+            h, w = frame.shape[:2]
+            thickness = max(6, int(round(min(h, w) * 0.02)))
+            cv2.rectangle(frame, (0, 0), (w - 1, h - 1), (0, 0, 255), thickness, cv2.LINE_AA)
+            cv2.putText(frame, "VIRTUAL BRAKE", (thickness + 8, thickness + 34),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2, cv2.LINE_AA)
         return frame
 
     @staticmethod
@@ -162,7 +179,14 @@ class Pipeline:
         self.ground = GroundPlane.from_config(self.config, width, height, override)
 
         ego_poly = self._ego_corridor(width, height)
-        ego = {"corridor_poly_img": ego_poly, "speed_note": "unknown"}
+        # BEV corridor too: the dashboard's reactive-ADAS marker prefers metric
+        # distance over the pixel-distance fallback when this is present.
+        ego = {"corridor_poly_img": ego_poly,
+               "corridor_poly_bev": self.ground.img_to_bev(ego_poly),
+               "speed_note": "unknown"}
+
+        # Optional per-clip context annotation (crosswalk/intersection spans).
+        context_spans = load_context_spans(os.path.join(out_dir, "context.json"))
 
         annotated_path = os.path.join(out_dir, "annotated.mp4")
         writer = cv2.VideoWriter(
@@ -171,6 +195,7 @@ class Pipeline:
         result = ClipResult()
         timings = {"track": 0.0, "forecast": 0.0, "risk": 0.0, "render": 0.0}
         n_frames = 0
+        last_brake_t = -1e9   # time of the most recent VIRTUAL_BRAKE, for the flash
 
         idx = 0
         while True:
@@ -188,7 +213,9 @@ class Pipeline:
             self._fill_bev(tracks)
             timings["track"] += (time.perf_counter() - t0) * 1000.0
 
-            context = {"flags": []}
+            flags = active_context_flags(t, len(tracks), context_spans)
+            context = {"flags": flags,
+                       "base_threshold": self.config.get("base_threshold", 0.75)}
             ctx = {
                 "frame_idx": idx, "t": t, "fps": fps,
                 "config": self.config, "ego": ego, "context": context,
@@ -206,17 +233,25 @@ class Pipeline:
             timings["forecast"] += (time.perf_counter() - t0) * 1000.0
 
             # --- risk + explanation (optional) ---
+            # The risk engine is per-frame: it scores every track's collision
+            # probability, runs the per-actor state machine, and returns the
+            # events emitted this frame (also setting each track's risk_level).
             t0 = time.perf_counter()
             frame_events: List[Event] = []
             if self.risk_engine is not None:
-                for tr in tracks:
-                    event = self.risk_engine(tr, ctx)
-                    if event is not None:
-                        if self.explainer is not None:
-                            expl = self.explainer(event, ctx)
-                            if expl is not None:
-                                event.explanation_template = expl
-                        frame_events.append(event)
+                track_by_id = {tr.id: tr for tr in tracks}
+                for event in self.risk_engine(tracks, ctx) or []:
+                    # Deterministic XAI explanation is always populated here.
+                    event.explanation_template = template_explain(
+                        event, track_by_id.get(event.actor_id), context)
+                    # Optional richer enrichment (e.g. LLM) via an injected hook.
+                    if self.explainer is not None:
+                        expl = self.explainer(event, ctx)
+                        if expl is not None:
+                            event.explanation_llm = expl
+                    frame_events.append(event)
+                    if event.type == "VIRTUAL_BRAKE":
+                        last_brake_t = t
             timings["risk"] += (time.perf_counter() - t0) * 1000.0
 
             record = FrameRecord(frame_idx=idx, t=round(t, 3), tracks=tracks,
@@ -226,7 +261,8 @@ class Pipeline:
 
             # --- render ---
             t0 = time.perf_counter()
-            self._draw_frame(frame, record, ego_poly)
+            brake_flash = 0.0 <= (t - last_brake_t) <= BRAKE_FLASH_S
+            self._draw_frame(frame, record, ego_poly, brake_flash=brake_flash)
             writer.write(frame)
             timings["render"] += (time.perf_counter() - t0) * 1000.0
 

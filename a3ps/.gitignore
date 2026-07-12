@@ -17,6 +17,9 @@ __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
 
+# Secrets
+.env
+
 # OS / editor
 .DS_Store
 .vscode/

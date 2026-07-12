@@ -1,5 +1,44 @@
 # a3ps — TODO
 
+## Status (updated 2026-07-10)
+
+Done and unit-tested (CPU, no data needed):
+- **Phase 4 — risk + decision.** `a3ps/risk/collision.py` (sigma-point collision
+  prob, corridor dilation, `RiskSmoother` EMA, 4 analytic tests) and
+  `a3ps/risk/decision.py` (`DecisionEngine` with context-aware thresholds +
+  per-actor SAFE→ALERT→BRAKE state machine, 2 s cooldown, THRESHOLD_LOWERED on
+  span onset). Wired into `pipeline.py` as a per-frame risk engine; renderer now
+  colors green→amber→red by risk level and flashes a red border 0.5 s after a
+  VIRTUAL_BRAKE. Per-clip context via `dashboard/clips/<id>/context.json`.
+- **`scripts/eval_anticipation.py`** — mTTA / AP / detection-recall /
+  false-alarm rate. Reads processed `events.json` (metric logic verified locally
+  on synthetic fixtures); `--run` processes clips on the GPU laptop.
+- **`scripts/eval_forecast.py`** — ADE/FDE Kalman vs Seq2Seq. Implemented;
+  Kalman path runs now, Seq2Seq auto-skips until `models/seq2seq_v1.pt` exists.
+- **Phase 5 — explanation (XAI).** `a3ps/explain/templates.py` `explain(event,
+  track, context)` builds the deterministic one-liner (motion phrase from BEV
+  velocity, threshold-lowered reason); the Pipeline fills `explanation_template`
+  on every emitted event. `a3ps/explain/llm_client.py` `enrich_events(clip_dir)`
+  is the OFFLINE MLLM pass — pulls each event's keyframe from `raw.mp4`,
+  downsizes to 768 px, sends facts + image to **Groq's free-tier** vision API
+  (`meta-llama/llama-4-scout-17b-16e-instruct`, OpenAI-compatible), writes
+  `explanation_llm`; has `--dry-run`, `--overwrite`, retries, and skips
+  already-enriched events. CLI: `python -m a3ps.explain.llm_client <clip_dir>`.
+  Switched off Anthropic to avoid any paid API usage.
+- Test suite: **60 passing** (`pytest a3ps/tests`).
+
+Pending / next up:
+- [ ] **Verify explanations on 3 dev clips** (GPU laptop): get a free key at
+      https://console.groq.com/keys, `export GROQ_API_KEY=...`, run the
+      pipeline, then `python -m a3ps.explain.llm_client dashboard/clips/<id>`
+      and read the `explanation_llm` strings — confirm they mention only real
+      scene elements. If one hallucinates, tighten `SYSTEM_PROMPT` in
+      `llm_client.py` and keep one before/after example for the report's
+      hallucination-mitigation note. Step can be cut entirely if it's simpler —
+      the deterministic templates already carry the XAI requirement.
+- [ ] Everything below (BEV calibration, mining, LSTM, dashboard, real data) is
+      blocked on the GPU laptop + the real Nexar dataset landing.
+
 ## Data: feed in the actual Nexar dataset
 
 Nexar clips are labelled by an Excel (`id, time_of_event, time_of_alert, target`),
@@ -87,9 +126,11 @@ changes:
 ## Downstream (needs the real dataset in place)
 
 Implemented and runnable now (on any clip, CPU): YOLOv8-Seg segmenter, BoT-SORT
-tracker + TrajectoryBuffer, Kalman-CV forecaster, and `pipeline.py`
-(-> `annotated.mp4` + `events.json`). Still to do:
+tracker + TrajectoryBuffer, Kalman-CV forecaster, risk/decision engine, and
+`pipeline.py` (-> `annotated.mp4` + `events.json`). Both eval scripts are
+implemented (see Status). Remaining runs are gated on the GPU laptop + data:
 
-- [ ] `scripts/eval_forecast.py` — ADE/FDE, Kalman vs LSTM (still a stub).
-- [ ] `scripts/eval_anticipation.py` — mTTA + AP + false-alarm rate on `eval`
-      (still a stub; also needs the risk/decision phase wired into the pipeline).
+- [ ] `scripts/eval_forecast.py` — run once mined shards exist; add the Seq2Seq
+      column once `models/seq2seq_v1.pt` is trained.
+- [ ] `scripts/eval_anticipation.py` — run with `--run` on the real `eval` split
+      (60 pos + 60 neg) to get the headline mTTA / AP / false-alarm numbers.
