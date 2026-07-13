@@ -108,7 +108,7 @@ This now also installs `groq` (offline MLLM enrichment) and `python-dotenv`
 silently fall back to CPU):
 ```powershell
 python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
-```
+``` 
 Must print `True` and your GPU's name. If `False`, stop and fix the torch
 install before continuing — nothing downstream will be fast otherwise.
 

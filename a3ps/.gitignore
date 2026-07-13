@@ -1,10 +1,10 @@
 # Datasets and generated artifacts
 data/
 outputs/
-dashboard/clips/
+
 
 # Model weights
-*.pt
+yolov8s-seg.pt
 
 # Virtual environments
 .venv/
