@@ -65,6 +65,52 @@ def test_compute_metrics_all_clean_negatives():
 
 
 # ---------------------------------------------------------------------------
+# matched-subset mTTA (fair A3PS-vs-reactive comparison)
+# ---------------------------------------------------------------------------
+
+def _master_row(clip_id, label, event_time_s, a3ps_fa, reactive_fa, processed=True):
+    return {
+        "clip_id": clip_id, "label": label, "event_time_s": event_time_s,
+        "a3ps_first_alert_t": a3ps_fa, "reactive_first_alert_t": reactive_fa,
+        "processed": processed,
+    }
+
+
+def test_matched_subset_only_counts_positives_both_anticipate():
+    rows = [
+        # both anticipate: A3PS tta=2.0 (5-3), reactive tta=1.0 (5-4)
+        _master_row("p1", 1, 5.0, a3ps_fa=3.0, reactive_fa=4.0),
+        # only A3PS anticipates -> excluded from the matched subset
+        _master_row("p2", 1, 6.0, a3ps_fa=5.5, reactive_fa=None),
+        # only reactive anticipates -> excluded
+        _master_row("p3", 1, 4.0, a3ps_fa=None, reactive_fa=3.5),
+        # negative, irrelevant to matched mTTA
+        _master_row("n1", 0, None, a3ps_fa=None, reactive_fa=None),
+    ]
+    m = ea.matched_subset_metrics(rows)
+    assert m is not None
+    assert m["n_matched"] == 1
+    assert abs(m["a3ps_mtta_s"] - 2.0) < 1e-9
+    assert abs(m["reactive_mtta_s"] - 1.0) < 1e-9
+    assert abs(m["gain_s"] - 1.0) < 1e-9   # A3PS is 1.0s earlier on the matched subset
+
+
+def test_matched_subset_none_when_no_overlap():
+    rows = [
+        _master_row("p1", 1, 5.0, a3ps_fa=3.0, reactive_fa=None),
+        _master_row("p2", 1, 6.0, a3ps_fa=None, reactive_fa=5.0),
+    ]
+    assert ea.matched_subset_metrics(rows) is None
+
+
+def test_matched_subset_ignores_unprocessed_rows():
+    rows = [
+        _master_row("p1", 1, 5.0, a3ps_fa=3.0, reactive_fa=4.0, processed=False),
+    ]
+    assert ea.matched_subset_metrics(rows) is None
+
+
+# ---------------------------------------------------------------------------
 # reading processed clips end-to-end (writes real events.json fixtures)
 # ---------------------------------------------------------------------------
 

@@ -1,0 +1,15 @@
+{
+  "clip_id": "02134",
+  "source_video": "raw.mp4",
+  "fps": 27.1,
+  "width": 1280,
+  "height": 720,
+  "processed_at": null,
+  "config": {
+    "model": "yolov8s-seg",
+    "forecaster": "kalman_cv",
+    "base_threshold": 0.75,
+    "horizon_s": 4.0,
+    "fake": true
+  }
+}

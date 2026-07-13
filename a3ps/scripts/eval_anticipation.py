@@ -175,6 +175,46 @@ def average_precision(scores, labels):
     return ap
 
 
+def matched_subset_metrics(rows):
+    """mTTA for BOTH methods, restricted to positives BOTH correctly anticipate.
+
+    Comparing each method's mTTA over its own (differently-sized) true-positive
+    set is confounded by recall: a method with lower recall/higher false-alarm
+    rate can show an inflated mTTA simply because it only "counts" an easier or
+    smaller subset of clips. Restricting both methods to the SAME matched
+    subset removes that bias, so a "+X.X s earlier" claim is defensible.
+
+    ``rows`` are the master per-clip rows (clip_id, label, event_time_s,
+    a3ps_first_alert_t, reactive_first_alert_t, processed). Returns None if no
+    positive clip is anticipated by both methods (nothing to compare).
+    """
+    a3ps_ttas, reactive_ttas = [], []
+    for r in rows:
+        if not r.get("processed") or r["label"] != 1:
+            continue
+        te = r["event_time_s"]
+        if te is None:
+            continue
+        a_fa = r["a3ps_first_alert_t"]
+        r_fa = r["reactive_first_alert_t"]
+        a_ok = a_fa is not None and a_fa <= te
+        r_ok = r_fa is not None and r_fa <= te
+        if a_ok and r_ok:
+            a3ps_ttas.append(te - a_fa)
+            reactive_ttas.append(te - r_fa)
+
+    if not a3ps_ttas:
+        return None
+    a3ps_mtta = sum(a3ps_ttas) / len(a3ps_ttas)
+    reactive_mtta = sum(reactive_ttas) / len(reactive_ttas)
+    return {
+        "n_matched": len(a3ps_ttas),
+        "a3ps_mtta_s": a3ps_mtta,
+        "reactive_mtta_s": reactive_mtta,
+        "gain_s": a3ps_mtta - reactive_mtta,
+    }
+
+
 def compute_metrics(rows):
     """Aggregate per-clip rows into anticipation metrics.
 
@@ -274,12 +314,16 @@ def _tta(label, first_alert_t, event_time_s):
     return None
 
 
-def build_report(a3ps, reactive, split, thresholds):
-    """Markdown report comparing A3PS vs the reactive-proximity baseline."""
-    gain = None
-    if not (math.isnan(a3ps["mTTA_s"]) or math.isnan(reactive["mTTA_s"])):
-        gain = a3ps["mTTA_s"] - reactive["mTTA_s"]
+def build_report(a3ps, reactive, split, thresholds, matched=None):
+    """Markdown report comparing A3PS vs the reactive-proximity baseline.
 
+    ``matched`` (optional, from :func:`matched_subset_metrics`) adds a
+    same-subset mTTA comparison -- the only comparison a "+X.X s earlier"
+    anticipation-gain claim should be substantiated with, since the raw
+    per-method mTTA rows above are computed over each method's own,
+    differently-sized true-positive set (confounded by recall/false-alarm
+    differences, not just timing).
+    """
     lines = [
         f"# Anticipation eval (split: {split})",
         "",
@@ -300,14 +344,41 @@ def build_report(a3ps, reactive, split, thresholds):
         f"| {_fmt(reactive['false_alarm_rate'])} "
         f"| {_fmt(reactive['mTTA_s'], 2)} (n={reactive['n_tta']}) |",
         "",
+        "_The mTTA row above is averaged over each method's own true-positive "
+        "set (different n, different clips) -- do NOT read the difference "
+        "between these two mTTA values as an anticipation-gain claim. See the "
+        "matched-subset comparison below for that._",
+        "",
     ]
-    if gain is not None:
+
+    if matched is not None:
+        gain = matched["gain_s"]
         earlier = "earlier" if gain >= 0 else "later"
-        lines.append(
-            f"**Anticipation gain:** A3PS alerts **{_fmt(abs(gain), 2)} s {earlier}** "
-            f"than the reactive baseline on average (mTTA {_fmt(a3ps['mTTA_s'], 2)} "
-            f"vs {_fmt(reactive['mTTA_s'], 2)} s).")
-    lines.append(f"\n_A3PS AP (peak-prob ranking): {_fmt(a3ps['AP'])}_")
+        lines += [
+            "## Matched-subset mTTA (fair, same-clips comparison)",
+            "",
+            f"Over the **{matched['n_matched']}** positive clip(s) BOTH methods "
+            "correctly anticipate (removes the recall/false-alarm-driven bias "
+            "of comparing mTTA across each method's own, differently-sized "
+            "true-positive set):",
+            "",
+            f"- A3PS mTTA: **{_fmt(matched['a3ps_mtta_s'], 2)} s**",
+            f"- Reactive-baseline mTTA: **{_fmt(matched['reactive_mtta_s'], 2)} s**",
+            f"- **Anticipation gain: A3PS is {_fmt(abs(gain), 2)} s {earlier}** "
+            "than the reactive baseline on this matched subset.",
+            "",
+        ]
+    else:
+        lines += [
+            "## Matched-subset mTTA (fair, same-clips comparison)",
+            "",
+            "_No positive clip is correctly anticipated by both methods -- "
+            "matched-subset mTTA is not computable, and no anticipation-gain "
+            "claim can be substantiated from this run._",
+            "",
+        ]
+
+    lines.append(f"_A3PS AP (peak-prob ranking): {_fmt(a3ps['AP'])}_")
     lines.append("")
     return "\n".join(lines)
 
@@ -433,7 +504,9 @@ def main():
         thresholds = {"base": base, "alert": round(base - margin, 4),
                       "floor": float(config.get("threshold_floor", 0.45))}
 
-    report = build_report(a3ps_summary, reactive_summary, args.split, thresholds)
+    matched = matched_subset_metrics(rows)
+
+    report = build_report(a3ps_summary, reactive_summary, args.split, thresholds, matched)
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fh:
         fh.write(report)
@@ -447,6 +520,13 @@ def main():
     print(f"{'reactive baseline':22s} {_fmt(reactive_summary['detection_recall']):>8s} "
           f"{_fmt(reactive_summary['false_alarm_rate']):>12s} "
           f"{_fmt(reactive_summary['mTTA_s'], 2):>9s}")
+    if matched is not None:
+        print(f"\nmatched-subset (n={matched['n_matched']}): "
+              f"A3PS {_fmt(matched['a3ps_mtta_s'], 2)}s vs reactive "
+              f"{_fmt(matched['reactive_mtta_s'], 2)}s "
+              f"(gain {_fmt(matched['gain_s'], 2)}s)")
+    else:
+        print("\nmatched-subset: no positive anticipated by both methods -- n/a")
     print(f"\nwrote {args.out}")
     print(f"wrote {args.per_clip_csv}")
 
