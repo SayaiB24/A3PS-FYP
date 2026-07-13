@@ -1,33 +1,38 @@
 #!/usr/bin/env python
-"""Evaluate anticipation: mTTA + AP + false-alarm rate on Nexar clips.
+"""Evaluate anticipation: A3PS vs a naive reactive-proximity baseline.
 
-The heavy perception (YOLO + tracking) and the light metric computation are
-decoupled so you can iterate on metrics without a GPU:
+Runs the full pipeline (no rendering) over every clip in a Nexar split, flags a
+clip when any ALERT / VIRTUAL_BRAKE fires, and reports, for BOTH methods:
 
-  * The pipeline writes a full ClipResult (meta + frames + events) to
-    ``<clips-dir>/<clip_id>/events.json`` for each clip.
-  * This script reads those processed results and scores them against the
-    manifest labels (``event_time_s`` for positives).
+  * detection rate  -- fraction of positives that alerted BEFORE the annotated
+    event time (true anticipation).
+  * false-alarm rate -- fraction of negatives that raised any alert.
+  * mTTA (s)        -- mean Time-To-Accident over anticipated positives:
+    mean(event_time - first_alert_time).
 
-On the GPU laptop, add ``--run`` to process any clip whose ``events.json`` is
-missing before scoring:
+The two methods:
+
+  * **A3PS** -- the pipeline's forecast + risk decision engine (the ALERT /
+    VIRTUAL_BRAKE events already in events.json).
+  * **Reactive-proximity baseline** -- a naive ADAS that "brakes" the first
+    frame ANY actor comes physically close to the ego corridor. This mirrors
+    the dashboard's reactive-ADAS marker exactly (BEV centroid within 2.0 m of
+    the BEV corridor, else image centroid within 8% of frame height of the
+    image corridor). No forecasting -- it can only react once the actor is
+    already close, so its mTTA is the "how much later a dumb system would have
+    reacted" reference A3PS is measured against.
+
+Heavy perception (YOLO + tracking) and the light metric computation are
+decoupled: the pipeline writes ``<clips-dir>/<clip_id>/events.json`` per clip
+(no video, ``render=False``), and this script scores those. Add ``--run`` to
+process any clip whose events.json is missing (needs GPU/model):
 
     python scripts/eval_anticipation.py --index data/nexar/index.csv --split eval --run
 
-Without ``--run`` it scores whatever is already processed (no GPU needed) --
-this is how the metric logic is verified locally.
+Without ``--run`` it scores whatever is already processed (no GPU needed).
 
-Metrics (clip level):
-  * detection recall -- fraction of positives that raised an alert BEFORE the
-    annotated event time.
-  * mTTA (s)         -- mean Time-To-Accident over correctly-anticipated
-    positives: mean(event_time - first_alert_time).
-  * false-alarm rate -- fraction of negatives that raised any alert.
-  * AP               -- average precision ranking clips by their peak
-    collision probability (positive vs negative).
-
-An "alert" is any event whose type is in ``--alert-types`` (default
-ALERT,VIRTUAL_BRAKE). Writes eval/anticipation_report.md.
+Writes ``eval/anticipation.md`` (the two-method comparison) and
+``eval/anticipation_per_clip.csv`` (one row per clip, both methods).
 """
 
 import argparse
@@ -40,8 +45,16 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # for run_pipeline hooks
 
 from a3ps.common.schema import ClipResult  # noqa: E402
+from a3ps.risk.collision import point_in_dilated_polygon  # noqa: E402
 
 DEFAULT_ALERT_TYPES = ("ALERT", "VIRTUAL_BRAKE")
+
+# Reactive-proximity baseline thresholds -- kept identical to the dashboard's
+# reactive-ADAS marker (dashboard/app.js: computeReactiveMarkers):
+#   BEV: centroid within 2.0 m of the BEV corridor polygon,
+#   img: centroid within 8% of frame height of the image corridor polygon.
+REACTIVE_BEV_THRESH_M = 2.0
+REACTIVE_IMG_FRAC = 0.08
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +98,7 @@ def _to_float(v):
 # ---------------------------------------------------------------------------
 
 def summarize_clip(clip_result, alert_types):
-    """Reduce a ClipResult to (first_alert_t, peak_prob) for scoring.
+    """Reduce a ClipResult to (first_alert_t, peak_prob) for A3PS scoring.
 
     first_alert_t: earliest event time whose type is an alert type (or None).
     peak_prob:     max smoothed collision probability over all tracks/frames
@@ -101,6 +114,32 @@ def summarize_clip(clip_result, alert_types):
             if p is not None and p > peak:
                 peak = float(p)
     return first_alert_t, peak
+
+
+def reactive_first_alert(clip_result, frame_height,
+                         bev_thresh=REACTIVE_BEV_THRESH_M, img_frac=REACTIVE_IMG_FRAC):
+    """First time ANY actor is close to the ego corridor (naive reactive ADAS).
+
+    Mirrors the dashboard's reactive-ADAS marker: per frame, per track, prefer
+    BEV metres (centroid_bev within ``bev_thresh`` m of corridor_poly_bev),
+    else fall back to image pixels (centroid_img within ``img_frac`` * frame
+    height of corridor_poly_img). Returns the earliest such frame time, or None
+    if no actor ever comes close. Independent of A3PS's events -- it only reads
+    tracked positions + the ego corridor, so it is a fair standalone baseline.
+    """
+    px_thresh = float(img_frac) * float(frame_height or 0)
+    for fr in clip_result.frames:
+        ego = fr.ego or {}
+        bev_poly = ego.get("corridor_poly_bev")
+        img_poly = ego.get("corridor_poly_img")
+        for tr in fr.tracks:
+            if tr.centroid_bev and bev_poly:
+                if point_in_dilated_polygon(tr.centroid_bev, bev_poly, bev_thresh):
+                    return fr.t
+            elif img_poly and tr.centroid_img and px_thresh > 0:
+                if point_in_dilated_polygon(tr.centroid_img, img_poly, px_thresh):
+                    return fr.t
+    return None
 
 
 def clip_events_path(clips_dir, clip_id):
@@ -141,6 +180,8 @@ def compute_metrics(rows):
 
     Each row: {clip_id, label, event_time_s, first_alert_t, peak_prob,
     processed}. Only processed rows contribute. Returns (summary, detail_rows).
+    Works for either method -- pass rows whose ``first_alert_t`` is the A3PS
+    alert time or the reactive-baseline alert time.
     """
     used = [r for r in rows if r["processed"]]
     pos = [r for r in used if r["label"] == 1]
@@ -182,11 +223,11 @@ def compute_metrics(rows):
 
 
 # ---------------------------------------------------------------------------
-# optional: run the pipeline for missing clips (GPU path)
+# optional: run the pipeline for missing clips (GPU path, no rendering)
 # ---------------------------------------------------------------------------
 
 def process_clip(video_path, out_dir, config):
-    """Run the full pipeline (forecaster + risk) on one clip -> events.json."""
+    """Run the full pipeline (forecaster + risk, NO rendering) -> events.json."""
     from run_pipeline import make_forecaster_hook, make_risk_hook
     from a3ps.pipeline import Pipeline
 
@@ -196,7 +237,8 @@ def process_clip(video_path, out_dir, config):
         risk_engine=make_risk_hook(config),
         explainer=None,
     )
-    return pipeline.run(video_path, out_dir)
+    # render=False: skip annotated.mp4 / raw.mp4 -- events.json is all we score.
+    return pipeline.run(video_path, out_dir, render=False)
 
 
 def resolve_video(row, videos_root):
@@ -206,7 +248,7 @@ def resolve_video(row, videos_root):
 
 
 # ---------------------------------------------------------------------------
-# report
+# report + csv
 # ---------------------------------------------------------------------------
 
 def _fmt(x, nd=3):
@@ -215,31 +257,92 @@ def _fmt(x, nd=3):
     return f"{x:.{nd}f}"
 
 
-def build_report(summary, detail, split):
-    lines = [f"# Anticipation eval (split: {split})", ""]
-    lines += [
-        f"- clips scored: **{summary['n_processed']}** "
-        f"({summary['n_positive']} positive, {summary['n_negative']} negative)",
-        f"- detection recall (alert before event): **{_fmt(summary['detection_recall'])}**",
-        f"- mTTA: **{_fmt(summary['mTTA_s'], 2)} s** (over {summary['n_tta']} anticipated positives)",
-        f"- false-alarm rate (negatives): **{_fmt(summary['false_alarm_rate'])}**",
-        f"- AP (peak-prob ranking): **{_fmt(summary['AP'])}**",
+def _outcome(label, first_alert_t, event_time_s):
+    """Human-readable per-clip outcome for one method."""
+    flagged = first_alert_t is not None
+    if label == 1:
+        anticipated = flagged and (event_time_s is None or first_alert_t <= event_time_s)
+        return "anticipated" if anticipated else ("late" if flagged else "MISS")
+    return "FALSE_ALARM" if flagged else "clean"
+
+
+def _tta(label, first_alert_t, event_time_s):
+    """Time-to-accident for a correctly-anticipated positive, else None."""
+    if label == 1 and first_alert_t is not None and event_time_s is not None \
+            and first_alert_t <= event_time_s:
+        return event_time_s - first_alert_t
+    return None
+
+
+def build_report(a3ps, reactive, split, thresholds):
+    """Markdown report comparing A3PS vs the reactive-proximity baseline."""
+    gain = None
+    if not (math.isnan(a3ps["mTTA_s"]) or math.isnan(reactive["mTTA_s"])):
+        gain = a3ps["mTTA_s"] - reactive["mTTA_s"]
+
+    lines = [
+        f"# Anticipation eval (split: {split})",
         "",
-        "| clip_id | label | event_t | first_alert_t | peak_prob | outcome |",
-        "|---------|-------|---------|---------------|-----------|---------|",
+        f"- clips scored: **{a3ps['n_processed']}** "
+        f"({a3ps['n_positive']} positive, {a3ps['n_negative']} negative)",
+        f"- thresholds (A3PS): base **{thresholds['base']}**, "
+        f"alert **{thresholds['alert']}** (base - alert_margin), "
+        f"floor **{thresholds['floor']}**",
+        f"- reactive baseline: BEV < {REACTIVE_BEV_THRESH_M} m "
+        f"(else img < {int(REACTIVE_IMG_FRAC * 100)}% of frame height) to the ego corridor",
+        "",
+        "| method | detection rate | false-alarm rate | mTTA (s) |",
+        "|---|---|---|---|",
+        f"| **A3PS (proactive)** | {_fmt(a3ps['detection_recall'])} "
+        f"| {_fmt(a3ps['false_alarm_rate'])} "
+        f"| {_fmt(a3ps['mTTA_s'], 2)} (n={a3ps['n_tta']}) |",
+        f"| Reactive-proximity (baseline) | {_fmt(reactive['detection_recall'])} "
+        f"| {_fmt(reactive['false_alarm_rate'])} "
+        f"| {_fmt(reactive['mTTA_s'], 2)} (n={reactive['n_tta']}) |",
+        "",
     ]
-    for r in sorted(detail, key=lambda r: (r["label"] != 1, str(r["clip_id"]))):
-        if r["label"] == 1:
-            outcome = "anticipated" if r.get("anticipated") else "MISS"
-        else:
-            outcome = "FALSE ALARM" if r.get("false_alarm") else "clean"
+    if gain is not None:
+        earlier = "earlier" if gain >= 0 else "later"
         lines.append(
-            f"| {r['clip_id']} | {'pos' if r['label'] == 1 else 'neg'} "
-            f"| {_fmt(r['event_time_s'], 2)} | {_fmt(r['first_alert_t'], 2)} "
-            f"| {_fmt(r['peak_prob'])} | {outcome} |"
-        )
+            f"**Anticipation gain:** A3PS alerts **{_fmt(abs(gain), 2)} s {earlier}** "
+            f"than the reactive baseline on average (mTTA {_fmt(a3ps['mTTA_s'], 2)} "
+            f"vs {_fmt(reactive['mTTA_s'], 2)} s).")
+    lines.append(f"\n_A3PS AP (peak-prob ranking): {_fmt(a3ps['AP'])}_")
     lines.append("")
     return "\n".join(lines)
+
+
+def write_per_clip_csv(path, rows):
+    """One row per clip: label, event time, and both methods' alert/tta/outcome."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    cols = [
+        "clip_id", "label", "processed", "event_time_s",
+        "a3ps_first_alert_t", "a3ps_tta_s", "a3ps_flagged", "a3ps_outcome",
+        "reactive_first_alert_t", "reactive_tta_s", "reactive_flagged", "reactive_outcome",
+        "peak_prob",
+    ]
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(cols)
+        for r in rows:
+            lbl = r["label"]
+            a_fa, r_fa, te = r["a3ps_first_alert_t"], r["reactive_first_alert_t"], r["event_time_s"]
+            a_tta, r_tta = _tta(lbl, a_fa, te), _tta(lbl, r_fa, te)
+            w.writerow([
+                r["clip_id"],
+                "pos" if lbl == 1 else ("neg" if lbl == 0 else ""),
+                int(bool(r["processed"])),
+                "" if te is None else f"{te:.3f}",
+                "" if a_fa is None else f"{a_fa:.3f}",
+                "" if a_tta is None else f"{a_tta:.3f}",
+                int(a_fa is not None),
+                _outcome(lbl, a_fa, te) if r["processed"] else "unprocessed",
+                "" if r_fa is None else f"{r_fa:.3f}",
+                "" if r_tta is None else f"{r_tta:.3f}",
+                int(r_fa is not None),
+                _outcome(lbl, r_fa, te) if r["processed"] else "unprocessed",
+                f"{r['peak_prob']:.4f}",
+            ])
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +351,7 @@ def build_report(summary, detail, split):
 
 def main():
     p = argparse.ArgumentParser(
-        description="mTTA / AP / false-alarm rate on Nexar clips.")
+        description="A3PS vs reactive-proximity anticipation eval.")
     p.add_argument("--index", default="data/nexar/index.csv")
     p.add_argument("--split", default="eval", choices=["dev", "demo", "eval"])
     p.add_argument("--config", default="configs/default.yaml")
@@ -257,10 +360,11 @@ def main():
     p.add_argument("--videos-root", default=None,
                    help="Root for resolving manifest paths (default: index dir).")
     p.add_argument("--run", action="store_true",
-                   help="Run the pipeline for clips missing events.json (needs GPU/model).")
+                   help="Run the pipeline (no rendering) for clips missing events.json.")
     p.add_argument("--alert-types", default=",".join(DEFAULT_ALERT_TYPES),
                    help="Comma-separated event types that count as an alert.")
-    p.add_argument("--out", default="eval/anticipation_report.md")
+    p.add_argument("--out", default="eval/anticipation.md")
+    p.add_argument("--per-clip-csv", default="eval/anticipation_per_clip.csv")
     args = p.parse_args()
 
     if not os.path.isfile(args.index):
@@ -279,7 +383,7 @@ def main():
         from a3ps.pipeline import load_config
         config = load_config(args.config)
 
-    rows = []
+    rows = []          # master rows (both methods' alert times per clip)
     n_missing = 0
     for m in manifest:
         ev_path = clip_events_path(args.clips_dir, m["clip_id"])
@@ -287,41 +391,64 @@ def main():
         if not os.path.isfile(ev_path) and args.run:
             video = resolve_video(m, videos_root)
             if os.path.isfile(video):
-                print(f"  running pipeline: {m['clip_id']} ...")
+                print(f"  running pipeline (no render): {m['clip_id']} ...")
                 process_clip(video, os.path.dirname(ev_path), config)
             else:
                 print(f"  ! video not found for {m['clip_id']}: {video}")
 
-        row = {**m, "first_alert_t": None, "peak_prob": 0.0, "processed": False}
+        row = {**m, "a3ps_first_alert_t": None, "reactive_first_alert_t": None,
+               "peak_prob": 0.0, "processed": False}
         if os.path.isfile(ev_path):
             clip = ClipResult.load_json(ev_path)
-            row["first_alert_t"], row["peak_prob"] = summarize_clip(clip, alert_types)
+            frame_h = int(clip.meta.get("height") or 720)
+            row["a3ps_first_alert_t"], row["peak_prob"] = summarize_clip(clip, alert_types)
+            row["reactive_first_alert_t"] = reactive_first_alert(clip, frame_h)
             row["processed"] = True
         else:
             n_missing += 1
         rows.append(row)
 
-    summary, detail = compute_metrics(rows)
-    if summary["n_processed"] == 0:
+    # Score each method with the shared compute_metrics (differ only in first_alert_t).
+    def _method_rows(key):
+        return [{"clip_id": r["clip_id"], "label": r["label"],
+                 "event_time_s": r["event_time_s"], "first_alert_t": r[key],
+                 "peak_prob": r["peak_prob"], "processed": r["processed"]}
+                for r in rows]
+
+    a3ps_summary, _ = compute_metrics(_method_rows("a3ps_first_alert_t"))
+    reactive_summary, _ = compute_metrics(_method_rows("reactive_first_alert_t"))
+
+    if a3ps_summary["n_processed"] == 0:
         print(f"No processed clips found under {args.clips_dir}. "
               f"Re-run with --run (on the GPU laptop) to process them.")
         return
     if n_missing:
         print(f"note: {n_missing}/{len(manifest)} clips not processed "
-              f"(scored the {summary['n_processed']} available). Use --run to fill in.")
+              f"(scored the {a3ps_summary['n_processed']} available). Use --run to fill in.")
 
-    report = build_report(summary, detail, args.split)
+    thresholds = {"base": 0.75, "alert": 0.60, "floor": 0.45}
+    if config is not None:
+        base = float(config.get("base_threshold", 0.75))
+        margin = float(config.get("alert_margin", 0.15))
+        thresholds = {"base": base, "alert": round(base - margin, 4),
+                      "floor": float(config.get("threshold_floor", 0.45))}
+
+    report = build_report(a3ps_summary, reactive_summary, args.split, thresholds)
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fh:
         fh.write(report)
+    write_per_clip_csv(args.per_clip_csv, rows)
 
     print()
-    print(f"detection recall : {_fmt(summary['detection_recall'])}")
-    print(f"mTTA             : {_fmt(summary['mTTA_s'], 2)} s "
-          f"(n={summary['n_tta']})")
-    print(f"false-alarm rate : {_fmt(summary['false_alarm_rate'])}")
-    print(f"AP               : {_fmt(summary['AP'])}")
+    print(f"{'':22s} {'detect':>8s} {'false-alarm':>12s} {'mTTA(s)':>9s}")
+    print(f"{'A3PS (proactive)':22s} {_fmt(a3ps_summary['detection_recall']):>8s} "
+          f"{_fmt(a3ps_summary['false_alarm_rate']):>12s} "
+          f"{_fmt(a3ps_summary['mTTA_s'], 2):>9s}")
+    print(f"{'reactive baseline':22s} {_fmt(reactive_summary['detection_recall']):>8s} "
+          f"{_fmt(reactive_summary['false_alarm_rate']):>12s} "
+          f"{_fmt(reactive_summary['mTTA_s'], 2):>9s}")
     print(f"\nwrote {args.out}")
+    print(f"wrote {args.per_clip_csv}")
 
 
 if __name__ == "__main__":

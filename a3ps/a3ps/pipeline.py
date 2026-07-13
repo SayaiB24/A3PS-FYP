@@ -162,7 +162,15 @@ class Pipeline:
 
     # -- main loop ----------------------------------------------------------
 
-    def run(self, video_path: str, out_dir: str, max_seconds: Optional[float] = None) -> ClipResult:
+    def run(self, video_path: str, out_dir: str, max_seconds: Optional[float] = None,
+            render: bool = True) -> ClipResult:
+        """Process a clip -> ClipResult (+ events.json/meta.json on disk).
+
+        When ``render`` is False the annotated.mp4 / raw.mp4 outputs are skipped
+        (no VideoWriter, no source copy) -- much faster for batch scoring over
+        many clips (e.g. scripts/eval_anticipation.py). events.json and
+        meta.json are still written so results can be cached and re-scored.
+        """
         import cv2
 
         os.makedirs(out_dir, exist_ok=True)
@@ -188,9 +196,11 @@ class Pipeline:
         # Optional per-clip context annotation (crosswalk/intersection spans).
         context_spans = load_context_spans(os.path.join(out_dir, "context.json"))
 
-        annotated_path = os.path.join(out_dir, "annotated.mp4")
-        writer = cv2.VideoWriter(
-            annotated_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+        writer = None
+        if render:
+            annotated_path = os.path.join(out_dir, "annotated.mp4")
+            writer = cv2.VideoWriter(
+                annotated_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
 
         result = ClipResult()
         timings = {"track": 0.0, "forecast": 0.0, "risk": 0.0, "render": 0.0}
@@ -259,21 +269,24 @@ class Pipeline:
             result.frames.append(record)
             result.events.extend(frame_events)
 
-            # --- render ---
-            t0 = time.perf_counter()
-            brake_flash = 0.0 <= (t - last_brake_t) <= BRAKE_FLASH_S
-            self._draw_frame(frame, record, ego_poly, brake_flash=brake_flash)
-            writer.write(frame)
-            timings["render"] += (time.perf_counter() - t0) * 1000.0
+            # --- render (skipped entirely when render=False) ---
+            if render:
+                t0 = time.perf_counter()
+                brake_flash = 0.0 <= (t - last_brake_t) <= BRAKE_FLASH_S
+                self._draw_frame(frame, record, ego_poly, brake_flash=brake_flash)
+                writer.write(frame)
+                timings["render"] += (time.perf_counter() - t0) * 1000.0
 
             n_frames += 1
             idx += 1
 
         cap.release()
-        writer.release()
+        if writer is not None:
+            writer.release()
 
         # raw.mp4 (verbatim copy of the source) + metadata.
-        shutil.copyfile(video_path, os.path.join(out_dir, "raw.mp4"))
+        if render:
+            shutil.copyfile(video_path, os.path.join(out_dir, "raw.mp4"))
         result.meta = self._build_meta(video_path, fps, width, height, n_frames)
 
         result.save_json(os.path.join(out_dir, "events.json"))

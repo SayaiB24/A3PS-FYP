@@ -10,9 +10,12 @@ Done and unit-tested (CPU, no data needed):
   span onset). Wired into `pipeline.py` as a per-frame risk engine; renderer now
   colors green→amber→red by risk level and flashes a red border 0.5 s after a
   VIRTUAL_BRAKE. Per-clip context via `dashboard/clips/<id>/context.json`.
-- **`scripts/eval_anticipation.py`** — mTTA / AP / detection-recall /
-  false-alarm rate. Reads processed `events.json` (metric logic verified locally
-  on synthetic fixtures); `--run` processes clips on the GPU laptop.
+- **`scripts/eval_anticipation.py`** — detection rate / false-alarm rate / mTTA
+  for **A3PS vs a naive reactive-proximity baseline** (dashboard corridor-distance
+  logic), plus A3PS AP. `--run` processes every eval clip through the pipeline
+  with rendering off (`render=False`); writes `eval/anticipation.md` +
+  `eval/anticipation_per_clip.csv`. Metric logic verified locally on synthetic
+  fixtures.
 - **`scripts/eval_forecast.py`** — ADE/FDE Kalman vs Seq2Seq. Implemented;
   Kalman path runs now, Seq2Seq auto-skips until `models/seq2seq_v1.pt` exists.
 - **Phase 5 — explanation (XAI).** `a3ps/explain/templates.py` `explain(event,

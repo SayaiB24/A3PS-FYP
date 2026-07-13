@@ -325,6 +325,35 @@ the same held-out val split the notebook used. Prints a table and writes
 right now was run against the tiny placeholder set — expect the real numbers
 to shift once the LSTM is retrained on 10,000+ windows.
 
+### 8.1 Comparing a previous vs a new model (fallback / A-B)
+
+`eval_forecast.py` takes `--weights` (which checkpoint) and `--out` (which
+table file), so you can keep more than one model and score each into its own
+table without overwriting the other. Keep the two checkpoints under distinct
+names, e.g. `seq2seq_prev.pt` (previous) and `seq2seq_new.pt` (retrained):
+
+```powershell
+# NEW model  -> main table
+python scripts\eval_forecast.py --weights notebooks\models\seq2seq_new.pt --out eval\forecast_table.md
+
+# PREVIOUS model -> its own table
+python scripts\eval_forecast.py --weights notebooks\models\seq2seq_prev.pt --out eval\forecast_table_oldmodel.md
+```
+
+⚠️ **The numbers depend on the mined data in `--shards` (default
+`data/trajectories`), not just the model.** Running the *previous* model on the
+*current* (larger) mined set will NOT reproduce its original 51.64 figure —
+that number was on the smaller earlier set and is archived verbatim in
+`eval/forecast_table_PREVIOUS.md`. Both `--weights` commands above score on
+whatever is in `data/trajectories` *now*, so they are a fair model-vs-model
+comparison on today's data. To cite the old result in the report, just use the
+archived `forecast_table_PREVIOUS.md`.
+
+Only `eval_forecast.py` uses the LSTM at all — `run_pipeline.py` (step 9) and
+`eval_anticipation.py` (step 10) always forecast with Kalman-CV and have no
+model flag, so the choice of `.pt` never affects the dashboard or the
+anticipation numbers.
+
 ---
 
 ## 9. Run the full pipeline on real clips (risk + decision are now wired)
@@ -376,6 +405,77 @@ alongside this handoff rewrite — `context.active_threshold` and
 `ego.corridor_poly_bev` are now written every frame. If you're running code
 from before this commit, `git pull` first.)*
 
+### 9.1 How VIRTUAL_BRAKE is decided — the full logic and math
+
+A VIRTUAL_BRAKE is **not** triggered by a real collision happening in the
+video. It fires when the system *predicts* a future collision confidently
+enough, for long enough. Forecasting uses **Kalman-CV** (not the LSTM). The
+chain, per track, per frame:
+
+**Step A — forecast the actor's future.** For any track with enough history,
+Kalman-CV predicts its next `horizon_s` seconds (4.0 s) at `predict_hz`
+(5 Hz) → **20 future steps, dt = 0.2 s apart**, each a Gaussian: a mean
+position + a per-step std (uncertainty grows further out).
+(`scripts/run_pipeline.py:make_forecaster_hook` → `a3ps/forecasting/kalman_cv.py`)
+
+**Step B — per-step collision probability.**
+(`a3ps/risk/collision.py:step_collision_prob`) For each of the 20 predicted
+Gaussians, sample 5 **sigma points**, and compute the weighted fraction of
+those points that land **inside the ego corridor, dilated by the actor's
+radius**. Plain English: *"given where this actor will probably be and how
+sure we are, how much of that probability mass sits in the car's path?"* →
+a number in `[0, 1]` for that step.
+- The **ego corridor** is the fixed trapezoid over the lower-centre of the
+  frame (`ego_corridor` in `configs/default.yaml`).
+- **Actor radius** dilates the corridor so a car counts as colliding when its
+  *body* (not just its centre point) enters the path (`actor_radius_px` /
+  `actor_radius_m`).
+
+**Step C — collapse the trajectory to one number + a TTC.**
+(`trajectory_collision_prob`) Take the 20 per-step probabilities, smooth them
+with a 3-step moving average, then:
+- `max_prob` = the highest smoothed probability over the 4 s horizon.
+- `ttc_s` (time-to-collision) = the time of the **first** step whose prob
+  exceeds 0.5; else the time of the peak-probability step. This is the
+  "collision predicted in ~X s" estimate shown on events.
+
+**Step D — smooth across frames.** (`RiskSmoother`, EMA `risk_ema_alpha =
+0.4`) Blend this frame's `max_prob` with the running per-track average so a
+single-frame glitch can't fire an intervention. The result is the track's
+**`collision_prob`**.
+
+**Step E — the decision state machine.** (`a3ps/risk/decision.py`) Each actor
+climbs `SAFE → ALERT → BRAKE`, and each forward step must be *confirmed for
+`frames_to_confirm` = 3 consecutive frames*:
+
+| Transition | Condition (must hold 3 frames in a row) | Emits |
+|---|---|---|
+| SAFE → ALERT | `collision_prob ≥ active_threshold − alert_margin` (0.75 − 0.15 = **0.60**) | `ALERT` |
+| ALERT → BRAKE | `collision_prob ≥ active_threshold` (**0.75**) | `VIRTUAL_BRAKE` |
+
+- **`active_threshold`** starts at `base_threshold` (0.75) and is *lowered*
+  under adverse context so we brake sooner: `crosswalk_ahead` −0.10,
+  `intersection` −0.10, `dense_traffic` (≥8 tracks) −0.05, never below
+  `threshold_floor` 0.45.
+- **BRAKE is terminal** for that incident — one ALERT + one VIRTUAL_BRAKE per
+  near-miss, not one per frame. The actor only re-arms after `collision_prob`
+  falls below `caution_threshold` (0.4) **and** `event_cooldown_s` (2 s) has
+  passed.
+
+**So, in one sentence:** *VIRTUAL_BRAKE fires when a track's smoothed,
+predicted collision probability stays at/above the danger threshold (0.75 by
+default, lower in risky context) for 3 straight frames, after it has already
+crossed the ALERT level (0.60).*
+
+**Tuning knobs (all in `configs/default.yaml`, no retraining):** lower
+`base_threshold` or raise `horizon_s` → brakes **earlier**; lower
+`frames_to_confirm` → fires **sooner** (but jitterier); widen the
+`ego_corridor` or `actor_radius_*` → more sensitive. If a clip brakes *after*
+the collision (e.g. the dev14 case), it means `collision_prob` only crossed
+0.75 late — usually because the actor entered the corridor / became
+predictable only just before impact; lowering `base_threshold` and/or
+lengthening `horizon_s` is the first thing to try.
+
 ---
 
 ## 10. Run the anticipation eval over the real eval split
@@ -384,13 +484,31 @@ from before this commit, `git pull` first.)*
 python scripts\eval_anticipation.py --index data\nexar\index.csv --split eval --run
 ```
 `--run` processes every one of the 120 real `eval` clips through the full
-pipeline (this is the GPU-heavy part of this step — expect it to take a
-while even on GPU; strip `--run` first if you just want to re-score clips
-you've already processed into `--clips-dir`). Writes `eval/anticipation_report.md`
-and prints detection recall, mTTA, false-alarm rate, and AP — the headline
-numbers for the report. If you only want a subset while iterating, point
-`--clips-dir` at a smaller pre-processed directory instead of the full eval
-set.
+pipeline **with rendering disabled** (`render=False` — no annotated.mp4/raw.mp4,
+just `events.json`), so it is far faster than step 9. Still the GPU-heavy part
+of this step; strip `--run` to re-score clips already processed into
+`--clips-dir`. Point `--clips-dir` at a smaller pre-processed directory to
+iterate on a subset.
+
+**It scores two methods side by side and writes two files:**
+- **A3PS (proactive)** — the pipeline's forecast + risk ALERT/VIRTUAL_BRAKE
+  events.
+- **Reactive-proximity baseline** — a naive ADAS that "brakes" the first frame
+  any actor comes physically close to the ego corridor (BEV < 2.0 m, else image
+  < 8% of frame height — identical to the dashboard's reactive-ADAS marker). No
+  forecasting, so it can only react late; A3PS's mTTA advantage over it is the
+  headline "we warn N seconds earlier" number.
+
+Outputs:
+- `eval/anticipation.md` — the comparison table (detection rate, false-alarm
+  rate, mTTA for **both** methods) plus the anticipation-gain line.
+- `eval/anticipation_per_clip.csv` — one row per clip: label, event time, and
+  each method's alert time / TTA / flagged / outcome.
+
+Both methods share the same metric definitions (detection = alerted *before* the
+annotated event time; false alarm = any alert on a negative), so the comparison
+is apples-to-apples. Expect A3PS to show a **higher mTTA** (fires earlier) than
+the reactive baseline — that gap is the whole point of the forecast layer.
 
 ---
 
@@ -440,7 +558,7 @@ For each of the 5 final demo clips:
 | 7 | `notebooks/models/seq2seq_v1.pt` | Loads via `Seq2SeqForecaster(weights_path=...)`; note the printed **best val ADE** |
 | 8 | `eval/forecast_table.md` | Has a populated `Seq2Seq-LSTM` row from the *retrained* model (not the 22-window placeholder) |
 | 9 | `dashboard/clips/<id>/{annotated.mp4, events.json, meta.json}` for several dev clips + updated `dashboard/clips/manifest.json` | `meta.json.stages.risk_engine == true`; `events.json` has non-zero `events` for at least one positive clip |
-| 10 | `eval/anticipation_report.md` | Has real detection recall / mTTA / false-alarm-rate / AP numbers over the 120-clip eval split |
+| 10 | `eval/anticipation.md` + `eval/anticipation_per_clip.csv` | A3PS-vs-reactive-baseline detection rate / false-alarm rate / mTTA over the 120-clip eval split; A3PS mTTA > reactive mTTA (fires earlier); per-clip CSV has both methods |
 | 11 (optional) | enriched `events.json` with populated `explanation_llm` on 2-3 clips | Narratives mention only real scene elements — no hallucinated objects/numbers |
 
 ---
@@ -467,7 +585,8 @@ data/dev_clips/                       # if it changed
 data/trajectories/                    # *.npz + stats.json + windows_preview.png
 notebooks/models/seq2seq_v1.pt        # retrained weights
 eval/forecast_table.md                # real Kalman-vs-LSTM numbers
-eval/anticipation_report.md           # real mTTA/AP/false-alarm numbers
+eval/anticipation.md                  # A3PS-vs-reactive mTTA/detection/false-alarm
+eval/anticipation_per_clip.csv        # per-clip breakdown, both methods
 ```
 **Copy back (optional, small-medium — for demoing on this laptop too):**
 ```
