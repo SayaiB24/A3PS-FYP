@@ -33,6 +33,17 @@ Without ``--run`` it scores whatever is already processed (no GPU needed).
 
 Writes ``eval/anticipation.md`` (the two-method comparison) and
 ``eval/anticipation_per_clip.csv`` (one row per clip, both methods).
+
+Threshold sweep (Step 7.1, ``--sweep``): once clips are processed, each clip's
+per-frame max collision_prob is cached to ``eval/cache/<clip_id>.csv`` (a
+one-time extraction from the already-loaded ClipResult -- no extra GPU work).
+Precision/recall are then recomputed directly from that cache for every
+``base_threshold`` in 0.40..0.90 (step 0.05), entirely in-memory, so sweeping
+11 thresholds costs nothing beyond the one pipeline pass already paid for.
+Writes ``eval/pr_curve_data.csv`` (columns: threshold, precision, recall) and
+``eval/pr_curve.png``:
+
+    python scripts/eval_anticipation.py --index data/nexar/index.csv --split eval --sweep
 """
 
 import argparse
@@ -213,6 +224,151 @@ def matched_subset_metrics(rows):
         "reactive_mtta_s": reactive_mtta,
         "gain_s": a3ps_mtta - reactive_mtta,
     }
+
+
+# ---------------------------------------------------------------------------
+# threshold sweep (Step 7.1): cache per-frame max prob once, sweep in-memory
+# ---------------------------------------------------------------------------
+
+# base_threshold sweep range: 0.40, 0.45, ..., 0.90 (11 points). round() avoids
+# float-step drift (0.4 + 0.05*11 != exactly 0.95 in binary floating point).
+THRESHOLD_SWEEP = [round(0.40 + 0.05 * i, 2) for i in range(11)]
+
+
+def cache_frame_probs(clip_result, clip_id, cache_dir, force=False):
+    """Extract each frame's max collision_prob (over all tracks) to a small
+    per-clip CSV cache under ``cache_dir`` -- computed ONCE from a ClipResult
+    already loaded for the main scoring pass, so this adds no extra parsing of
+    the (much larger) events.json, and repeated ``--sweep`` runs skip clips
+    that are already cached (pass ``force=True`` to rebuild).
+
+    This is what lets the threshold sweep avoid re-running the GPU pipeline:
+    every candidate ``base_threshold`` is just a comparison against these
+    already-extracted numbers, not a new forecast/risk pass.
+    """
+    path = os.path.join(cache_dir, f"{clip_id}.csv")
+    if os.path.isfile(path) and not force:
+        return path
+    os.makedirs(cache_dir, exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["t", "max_prob"])
+        for fr in clip_result.frames:
+            max_p = 0.0
+            for tr in fr.tracks:
+                p = getattr(tr.prediction, "collision_prob", None) if tr.prediction else None
+                if p is not None and p > max_p:
+                    max_p = float(p)
+            w.writerow([f"{fr.t:.3f}", f"{max_p:.4f}"])
+    return path
+
+
+def load_frame_prob_cache(cache_dir, clip_id):
+    """Read one clip's cached (t, max_prob) list back, or None if not cached."""
+    path = os.path.join(cache_dir, f"{clip_id}.csv")
+    if not os.path.isfile(path):
+        return None
+    out = []
+    with open(path, newline="", encoding="utf-8") as fh:
+        for r in csv.DictReader(fh):
+            out.append((float(r["t"]), float(r["max_prob"])))
+    return out
+
+
+def sweep_thresholds(rows, cache_dir, thresholds=THRESHOLD_SWEEP):
+    """Precision/recall at each candidate ``base_threshold``, from the cache only.
+
+    For a positive clip, "detected" at threshold T means some cached frame at
+    or before ``event_time_s`` has max_prob >= T (mirrors the "anticipated"
+    semantics used everywhere else in this file). For a negative clip,
+    "flagged" at T means ANY cached frame has max_prob >= T (a false alarm).
+    This intentionally ignores the decision engine's frames_to_confirm/cooldown
+    debounce -- the sweep is measuring the pure probability decision boundary,
+    holding the rest of the pipeline fixed, which is what a PR-curve-over-
+    threshold is meant to isolate.
+
+    ``rows`` are the master per-clip rows (need clip_id/label/event_time_s/
+    processed). Returns a list of dicts in ``thresholds`` order:
+    {threshold, precision, recall, tp, fp, fn}.
+    """
+    caches = {}
+    for r in rows:
+        if not r.get("processed"):
+            continue
+        cache = load_frame_prob_cache(cache_dir, r["clip_id"])
+        if cache is not None:
+            caches[r["clip_id"]] = cache
+
+    sweep = []
+    for thr in thresholds:
+        tp = fp = fn = 0
+        for r in rows:
+            cache = caches.get(r["clip_id"])
+            if cache is None:
+                continue
+            if r["label"] == 1:
+                te = r["event_time_s"]
+                hit = any(p >= thr and (te is None or t <= te) for t, p in cache)
+                if hit:
+                    tp += 1
+                else:
+                    fn += 1
+            elif r["label"] == 0:
+                if any(p >= thr for _t, p in cache):
+                    fp += 1
+        precision = (tp / (tp + fp)) if (tp + fp) > 0 else float("nan")
+        recall = (tp / (tp + fn)) if (tp + fn) > 0 else float("nan")
+        sweep.append({"threshold": thr, "precision": precision, "recall": recall,
+                       "tp": tp, "fp": fp, "fn": fn})
+    return sweep
+
+
+def write_pr_csv(path, sweep):
+    """threshold,precision,recall -- one row per swept threshold."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["threshold", "precision", "recall"])
+        for row in sweep:
+            w.writerow([
+                f"{row['threshold']:.2f}",
+                "" if math.isnan(row["precision"]) else f"{row['precision']:.4f}",
+                "" if math.isnan(row["recall"]) else f"{row['recall']:.4f}",
+            ])
+
+
+def render_pr_curve(path_png, sweep):
+    """Precision-vs-recall curve, each point annotated with its threshold."""
+    import matplotlib
+    matplotlib.use("Agg")   # headless
+    import matplotlib.pyplot as plt
+
+    pts = [(row["recall"], row["precision"], row["threshold"]) for row in sweep
+           if not math.isnan(row["recall"]) and not math.isnan(row["precision"])]
+    pts.sort(key=lambda p: p[0])   # ascending recall -> a left-to-right curve
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    if pts:
+        rs = [p[0] for p in pts]
+        ps = [p[1] for p in pts]
+        ax.plot(rs, ps, "-o", color="#1f77b4")
+        for r, prec, t in pts:
+            ax.annotate(f"{t:.2f}", (r, prec), textcoords="offset points",
+                        xytext=(4, 4), fontsize=8)
+    else:
+        ax.text(0.5, 0.5, "no valid (precision, recall) points",
+                ha="center", va="center", transform=ax.transAxes)
+    ax.set_xlabel("Recall")
+    ax.set_ylabel("Precision")
+    ax.set_xlim(-0.02, 1.05)
+    ax.set_ylim(-0.02, 1.05)
+    ax.set_title("A3PS precision-recall sweep over base_threshold (0.40-0.90)")
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+
+    os.makedirs(os.path.dirname(path_png) or ".", exist_ok=True)
+    fig.savefig(path_png, dpi=150)
+    plt.close(fig)
 
 
 def compute_metrics(rows):
@@ -436,6 +592,16 @@ def main():
                    help="Comma-separated event types that count as an alert.")
     p.add_argument("--out", default="eval/anticipation.md")
     p.add_argument("--per-clip-csv", default="eval/anticipation_per_clip.csv")
+    p.add_argument("--sweep", action="store_true",
+                   help="Also cache per-frame max collision_prob and sweep "
+                        "base_threshold (0.40-0.90 step 0.05) for a PR curve, "
+                        "without re-running the GPU pipeline.")
+    p.add_argument("--cache-dir", default="eval/cache",
+                   help="Per-clip per-frame max-prob cache (built once, reused across sweeps).")
+    p.add_argument("--force-cache", action="store_true",
+                   help="Rebuild the per-frame cache even if it already exists for a clip.")
+    p.add_argument("--pr-csv", default="eval/pr_curve_data.csv")
+    p.add_argument("--pr-png", default="eval/pr_curve.png")
     args = p.parse_args()
 
     if not os.path.isfile(args.index):
@@ -475,6 +641,10 @@ def main():
             row["a3ps_first_alert_t"], row["peak_prob"] = summarize_clip(clip, alert_types)
             row["reactive_first_alert_t"] = reactive_first_alert(clip, frame_h)
             row["processed"] = True
+            if args.sweep:
+                # One-time extraction from the ClipResult already in memory --
+                # no re-parse of events.json, no GPU work.
+                cache_frame_probs(clip, m["clip_id"], args.cache_dir, force=args.force_cache)
         else:
             n_missing += 1
         rows.append(row)
@@ -529,6 +699,19 @@ def main():
         print("\nmatched-subset: no positive anticipated by both methods -- n/a")
     print(f"\nwrote {args.out}")
     print(f"wrote {args.per_clip_csv}")
+
+    if args.sweep:
+        sweep = sweep_thresholds(rows, args.cache_dir, THRESHOLD_SWEEP)
+        write_pr_csv(args.pr_csv, sweep)
+        render_pr_curve(args.pr_png, sweep)
+        print(f"\nthreshold sweep ({THRESHOLD_SWEEP[0]}-{THRESHOLD_SWEEP[-1]}, "
+              f"step 0.05):")
+        for row in sweep:
+            print(f"  thr={row['threshold']:.2f}  "
+                  f"precision={_fmt(row['precision'])}  recall={_fmt(row['recall'])}  "
+                  f"(tp={row['tp']} fp={row['fp']} fn={row['fn']})")
+        print(f"\nwrote {args.pr_csv}")
+        print(f"wrote {args.pr_png}")
 
 
 if __name__ == "__main__":

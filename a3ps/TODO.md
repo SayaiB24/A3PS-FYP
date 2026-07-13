@@ -1,139 +1,170 @@
-# a3ps — TODO
+# a3ps — TODO (regenerated 2026-07-14)
 
-## Status (updated 2026-07-10)
+Two halves: **everything implemented so far** (the record), then **future
+scope** (what's left, what's next, what could come after). For how to run
+any of it: `execution.md`. For how it works: `logic_pipeline.md`.
 
-Done and unit-tested (CPU, no data needed):
-- **Phase 4 — risk + decision.** `a3ps/risk/collision.py` (sigma-point collision
-  prob, corridor dilation, `RiskSmoother` EMA, 4 analytic tests) and
-  `a3ps/risk/decision.py` (`DecisionEngine` with context-aware thresholds +
-  per-actor SAFE→ALERT→BRAKE state machine, 2 s cooldown, THRESHOLD_LOWERED on
-  span onset). Wired into `pipeline.py` as a per-frame risk engine; renderer now
-  colors green→amber→red by risk level and flashes a red border 0.5 s after a
-  VIRTUAL_BRAKE. Per-clip context via `dashboard/clips/<id>/context.json`.
-- **`scripts/eval_anticipation.py`** — detection rate / false-alarm rate / mTTA
-  for **A3PS vs a naive reactive-proximity baseline** (dashboard corridor-distance
-  logic), plus A3PS AP. `--run` processes every eval clip through the pipeline
-  with rendering off (`render=False`); writes `eval/anticipation.md` +
-  `eval/anticipation_per_clip.csv`. Metric logic verified locally on synthetic
-  fixtures.
-- **`scripts/eval_forecast.py`** — ADE/FDE Kalman vs Seq2Seq. Implemented;
-  Kalman path runs now, Seq2Seq auto-skips until `models/seq2seq_v1.pt` exists.
-- **Phase 5 — explanation (XAI).** `a3ps/explain/templates.py` `explain(event,
-  track, context)` builds the deterministic one-liner (motion phrase from BEV
-  velocity, threshold-lowered reason); the Pipeline fills `explanation_template`
-  on every emitted event. `a3ps/explain/llm_client.py` `enrich_events(clip_dir)`
-  is the OFFLINE MLLM pass — pulls each event's keyframe from `raw.mp4`,
-  downsizes to 768 px, sends facts + image to **Groq's free-tier** vision API
-  (`meta-llama/llama-4-scout-17b-16e-instruct`, OpenAI-compatible), writes
-  `explanation_llm`; has `--dry-run`, `--overwrite`, retries, and skips
-  already-enriched events. CLI: `python -m a3ps.explain.llm_client <clip_dir>`.
-  Switched off Anthropic to avoid any paid API usage.
-- Test suite: **60 passing** (`pytest a3ps/tests`).
+---
 
-Pending / next up:
-- [ ] **Verify explanations on 3 dev clips** (GPU laptop): get a free key at
-      https://console.groq.com/keys, `export GROQ_API_KEY=...`, run the
-      pipeline, then `python -m a3ps.explain.llm_client dashboard/clips/<id>`
-      and read the `explanation_llm` strings — confirm they mention only real
-      scene elements. If one hallucinates, tighten `SYSTEM_PROMPT` in
-      `llm_client.py` and keep one before/after example for the report's
-      hallucination-mitigation note. Step can be cut entirely if it's simpler —
-      the deterministic templates already carry the XAI requirement.
-- [ ] Everything below (BEV calibration, mining, LSTM, dashboard, real data) is
-      blocked on the GPU laptop + the real Nexar dataset landing.
+## Part A — Implementation completed to date
 
-## Data: feed in the actual Nexar dataset
+### Core pipeline (all five phases, implemented + unit-tested)
+- [x] **Phase 1+2 — Perception + Tracking** (`a3ps/tracking/tracker.py`):
+      single fused YOLOv8-Seg `model.track()` call (detection + segmentation
+      + BoT-SORT IDs in one pass); class filtering AFTER association (fixes a
+      real ID-loss bug); foot-point centroids; `TrajectoryBuffer` decimating
+      30 fps → 5 Hz with 2 s history per track; CUDA auto-detect + `.half()`;
+      `track_buffer` 30→90 for occlusion robustness.
+- [x] **Phase 3 — Forecasting** (`a3ps/forecasting/`): Kalman-CV (filterpy,
+      `[x,y,vx,vy]`, measurement-covariance std reporting, tuned
+      `process_var=0.1`, straight-line fallback under 4 history points) and
+      Seq2Seq-LSTM (encoder/decoder, per-step log-variance head, drop-in
+      `predict()` interface). **Trained on the real mined set**; on the
+      289-window val split the LSTM beats Kalman at 4 s (ADE 56.33 vs 61.27,
+      FDE 99.74 vs 122.55); both checkpoints kept (`seq2seq_v1.pt`,
+      `seq2seq_prev.pt`) with both result tables archived.
+- [x] **Phase 4 — Risk + Decision** (`a3ps/risk/`): sigma-point collision
+      probability vs actor-radius-dilated ego corridor; per-trajectory
+      max_prob + ttc_s; cross-frame EMA (`RiskSmoother`); `DecisionEngine`
+      with context-lowered thresholds (floor 0.45), 3-frame confirmation,
+      one-event-per-transition SAFE→ALERT→BRAKE, 2 s cooldown,
+      THRESHOLD_LOWERED on span onset.
+- [x] **Phase 5 — Explanation (XAI)** (`a3ps/explain/`): deterministic
+      grammar templates on every event (motion phrase from BEV velocity,
+      threshold-lowered reason); offline Groq vision-LLM enrichment
+      (`llm_client.py`) with dry-run/overwrite/retries + facts-only
+      constrained prompt; `system_prompt` override + permissive-prompt
+      illustration variant (`llm_client_permissive_test.py`, self-restoring)
+      for the paper's hallucination before/after example.
+- [x] **Orchestrator** (`a3ps/pipeline.py`): injectable hooks per phase;
+      `render=False` fast path for batch eval; **per-stage latency
+      (`per_stage_ms`) written into meta.json** (ordering bug fixed — it
+      used to be computed after the file write and never persisted), with an
+      honesty note for the fused perception+tracking measurement.
+- [x] **Shared schema** (`a3ps/common/schema.py`): lossless JSON round-trip
+      contract consumed by every phase, every eval script, and the JS
+      dashboard.
 
-Nexar clips are labelled by an Excel (`id, time_of_event, time_of_alert, target`),
-not by folder. Upload a FLAT pool of clips + the Excel; `prepare_nexar.py` reads
-`target` for the label and computes the dev/eval/train_traj splits.
+### Data & training infrastructure
+- [x] `prepare_nexar.py` — Excel(s) auto-merge, flat-pool ingestion, split
+      computation (dev 15 / eval 120 / rest→train_traj), dev-clip
+      copy+rename with README mapping.
+- [x] `mine_trajectories.py` — windowing, ID-switch + static filters (20%
+      static kept), normalization with stored inverse transform, per-clip
+      shards, **resume-by-shard-existence + self-healing stats**. Run for
+      real on the GPU laptop (~93 clips mined; more negatives added).
+- [x] `train_forecaster.ipynb` — Colab-ready but runs locally; early
+      stopping on val ADE; retrained on the enlarged mined set.
 
-**Where to put it (input — do NOT pre-sort by class or split)**
+### Evaluation suite (all implemented, tested on synthetic fixtures)
+- [x] `eval_forecast.py` — ADE/FDE @1/2/4 s, both forecasters, same seeded
+      val split; previous-model comparison workflow (`--weights`/`--out`).
+- [x] `eval_anticipation.py` — detection rate / false-alarm rate / mTTA for
+      **A3PS vs a reactive-proximity baseline** (exact port of the
+      dashboard's marker logic); **matched-subset mTTA** (the fair
+      anticipation-gain number); resumable `--run` with rendering off;
+      **`--sweep`** threshold sweep (0.40→0.90) from a per-frame prob cache
+      → PR curve CSV + PNG with zero extra GPU passes.
+- [x] `run_ablations.py` — Table II in the paper's exact row order; config
+      temporarily overridden and always restored; identical-config rows
+      reuse the baseline run (4 real passes instead of 6).
+- [x] `make_qual_figure.py` — 2×2 before/ALERT/BRAKE/after figure at
+      300 DPI using the *actual* dashboard drawing code; verified on dev14.
+- [x] `collect_paper_stats.py` — one-stop paper-stats scan (config,
+      hardware/CUDA, splits, latency aggregation, all eval outputs); never
+      fabricates missing numbers.
+- [x] New ablation config switches wired through the pipeline:
+      `forecaster: kalman_cv|seq2seq`, `dynamic_threshold`, `ema_smoothing`.
 
-```
-data/nexar/
-├── videos/            # ALL clips, flat, original id filenames (e.g. 00042.mp4)
-└── labels.xlsx        # the Excel (drop both if you have train + test Excels)
-```
+### Dashboard & demo
+- [x] Static dashboard (canvas overlays, event log with explanations, risk
+      timeline with live `active_threshold` line, brake banner/vignette,
+      ▼ A3PS vs ▽ reactive-ADAS gap markers). All 15 dev clips processed
+      with the full risk engine and committed.
 
-**Counts to upload** (from the Excel `target` column):
-- positives (`target=1`): 65   (5 -> dev, 60 -> eval)
-- negatives (`target=0`): 90   (10 -> dev, 60 -> eval, 20 -> train_traj)
-- minimum viable: 20 pos + 30 neg (fills dev, partial eval)
+### Documentation & quality
+- [x] `execution.md` (from-scratch run guide), `logic_pipeline.md` (+ PDF),
+      `metrics.md` (per-metric commands/reasoning/execution order),
+      `QnA.md` (tricky-part Q&A), `GPU_HANDOFF.md` (kept current, incl.
+      §9.1 VIRTUAL_BRAKE math and §10 matched-subset guidance), `results.md`
+      + `explanation.md` updated for the retrained-LSTM outcome.
+- [x] Test suite: **90 passing** (schema, geometry, collision, decision incl.
+      new toggles, tracking buffer, forecasting, mining, eval metrics incl.
+      sweep + matched-subset, qual-figure logic, pipeline latency, LLM
+      client incl. prompt override).
 
-**Then run** (paths can point anywhere; no need to move 30 GB):
+---
 
-```
-python scripts/prepare_nexar.py --root data/nexar
-```
+## Part B — Future scope & future implementation
 
-Produces `data/nexar/index.csv` (master: clip_id, path, label, split,
-event_time_s, alert_time_s, fps, w, h) and copies the 15 dev clips into
-`data/dev_clips/` (+ README). eval / train_traj stay as rows in index.csv.
+### B1. Immediate next runs (blocked only on GPU time, no new code)
+- [ ] Finish `eval_anticipation.py --run` over the full 120-clip eval split;
+      read the **matched-subset mTTA** and, if it's negative (A3PS later
+      than the naive baseline, as seen on the tiny dev sample), tune
+      `base_threshold` / `horizon_s` / `frames_to_confirm` and re-run until
+      the operating point is defensible.
+- [ ] `--sweep` on the cached eval results → PR curve for the paper.
+- [ ] `run_ablations.py` overnight → Table II.
+- [ ] 3+ clips re-run through `run_pipeline.py` **on the GPU laptop** so
+      Table IV latency reflects GPU (CPU numbers are ~20-40x slower and must
+      be labeled if used).
+- [ ] Groq enrichment on 2-3 clips + the permissive-prompt before/after pair
+      for Section VII.B.
+- [ ] Decide (with supervisor) on the user study (Section VII.C): run a
+      15-25-person Likert study, or state the limitation explicitly.
+- [ ] Final `collect_paper_stats.py` pass; paste into the paper.
 
-- [ ] FIRST: finish `prepare_nexar.py` rewrite — xlsx reader (openpyxl, installed),
-      match videos by `id`, label from `target`. (folder-mode is the old path.)
-- [ ] Remove the smoke-test copy `data/nexar/negative/02134.mp4` if present.
+### B2. Week-4 planned work
+- [ ] **Per-clip BEV calibration** for the ~5 final demo clips
+      (`ground.yaml` per clip, `forecast_space: bev`, `verify_bev.py`
+      check: 5-20 m/s velocities, ≥80% predictions in frame).
+- [ ] Re-mine trajectories in BEV metres after calibration if the LSTM is to
+      train in metric space (current mining is image-pixel space).
+- [ ] Pick + polish the 5 demo clips (manifest, optional `context.json` for
+      a THRESHOLD_LOWERED demo, one hero clip for the qualitative figure).
 
-## Week 4: per-clip BEV calibration for the 5 final demo clips
-When Option 2 becomes worth it: later, in Week 4, when you're preparing your 5 demo clips. At that point you have exactly 5 clips to worry about, and spending 30 minutes each to give them proper metric units for the final demo is a good investment. Do it then, not now.
+### B3. Model & algorithm improvements (post-deadline candidates)
+- [ ] **Grow the mined set to the original 10k+ window target** and retrain
+      the LSTM — its 4 s-horizon win should widen with more nonlinear-motion
+      data; revisit making it the pipeline default if it also wins at 2 s.
+- [ ] **Interaction-aware forecasting** (social pooling / attention over
+      neighboring tracks) — current forecasters treat every actor
+      independently.
+- [ ] **Full-covariance uncertainty** — risk math currently assumes diagonal
+      per-step Gaussians; correlated x-y uncertainty would sharpen corridor
+      probabilities for turning actors.
+- [ ] **Learned/adaptive decision thresholds** — replace the hand-tuned
+      0.75/0.60/3-frame machine with thresholds optimized directly against
+      mTTA-vs-false-alarm cost on the eval split (the PR-sweep
+      infrastructure already computes the frontier).
+- [ ] **Ego-motion compensation** — the ego corridor is static in the image;
+      compensating camera motion (optical flow / homography between frames)
+      would reduce false risk on turns.
+- [ ] **Detect context flags from imagery** — crosswalk/intersection are
+      currently per-clip annotations by design; a lightweight classifier
+      would close that honesty gap.
+- [ ] **Class-conditioned forecasting** — mined windows carry `class_ids`;
+      conditioning the LSTM on actor class (pedestrian vs car dynamics) is
+      unexploited.
 
-The default ground-plane trapezoid is generic and miscalibrated for real clips
-(verified on 02134.mp4: BEV velocities too low, some predicted depths negative).
-Pipeline default is `forecast_space: img` (relative units) until then.
+### B4. Systems & engineering future work
+- [ ] **True real-time mode** — frame-skipping / async stages / TensorRT or
+      ONNX export of the YOLO model; target ≥15 FPS end-to-end on GPU.
+- [ ] **Streaming input** (webcam/RTSP) instead of file-based clips.
+- [ ] Fix the mining quirk where zero-window clips are re-tracked every run
+      (write an empty marker shard).
+- [ ] Batched forecasting: the per-track Python loop in the forecaster hook
+      could batch all ready tracks per frame (matters for the LSTM path).
+- [ ] Dashboard: side-by-side variant comparison (e.g. Kalman vs LSTM run of
+      the same clip) and a PR-curve/ablation results page.
+- [ ] CI (GitHub Actions) running the 90-test suite per push.
 
-For each of the 5 final demo clips:
-- [ ] Pick 4 road points in the frame + estimate their real-world distances.
-- [ ] Save `dashboard/clips/<clip>/ground.yaml` (image_points_frac + ground_points_m).
-- [ ] Set `ground_plane_override` (or per-clip config) and `forecast_space: bev`.
-- [ ] Re-run `scripts/verify_bev.py` — velocities should read ~5-20 m/s and
-      predictions should stay in-frame (>=80%).
-
-## Trajectory mining (`scripts/mine_trajectories.py`) — NOT done in this step
-
-The script + its windowing/normalization logic are implemented and unit-tested
-(`tests/test_mining.py`, 8 tests). What remains — all blocked on the real
-dataset, since `train_traj` is currently empty (only clip 02134 exists, in `dev`):
-
-- [ ] Run on the real `train_traj` split and hit the target of **10k+ windows**
-      (`python scripts/mine_trajectories.py`; overnight on the laptop is fine).
-- [ ] Verify the `--plot` scatter on real traffic: paths should be **smooth**
-      (jump filter worked) and **forward-biased** (red futures extend +y).
-- [ ] Confirm `stats.json` class mix / filter tallies look sane on real data
-      (~20% static retained; short-track & ID-switch drops non-trivial).
-- [ ] Currently mines in **image pixels** (`forecast_space: img`, static_thresh
-      15 px). Re-mine in **BEV metres** after Week 4 per-clip calibration if the
-      LSTM is to train in metric space.
-- [ ] Verified so far only via a `--split dev` smoke run on 02134 (not the real
-      train set). Re-run once real data lands.
-
-## LSTM forecaster (STRETCH, Week 3) — not started
-
-- [ ] Train `notebooks/train_forecaster.ipynb` on the mined windows.
-- [ ] Implement `a3ps/forecasting/seq2seq.py` (currently raises NotImplementedError).
-
-## Dashboard: shift from dummy to real data (later)
-
-The dashboard ships a dummy clip `fake_demo` (`scripts/make_demo_clip.py`) so the
-console / timeline / banner can be built before the risk engine exists. It reads
-ONLY the ClipResult schema, so the switch to real data needs no dashboard code
-changes:
-
-- [ ] After Phase 4 (risk engine) fills real `collision_prob` + emits events,
-      run the pipeline on the demo clips.
-- [ ] Edit `dashboard/clips/manifest.json` to list the real clip id(s); drop
-      `fake_demo`.
-- [ ] Verify threats / threshold / event-log / banner / risk-timeline (incl. the
-      ▼ A3PS vs ▽ reactive-ADAS gap) all populate from the real events.
-
-## Downstream (needs the real dataset in place)
-
-Implemented and runnable now (on any clip, CPU): YOLOv8-Seg segmenter, BoT-SORT
-tracker + TrajectoryBuffer, Kalman-CV forecaster, risk/decision engine, and
-`pipeline.py` (-> `annotated.mp4` + `events.json`). Both eval scripts are
-implemented (see Status). Remaining runs are gated on the GPU laptop + data:
-
-- [ ] `scripts/eval_forecast.py` — run once mined shards exist; add the Seq2Seq
-      column once `models/seq2seq_v1.pt` is trained.
-- [ ] `scripts/eval_anticipation.py` — run with `--run` on the real `eval` split
-      (60 pos + 60 neg) to get the headline mTTA / AP / false-alarm numbers.
+### B5. Research extensions (beyond the current paper)
+- [ ] Evaluate on a second dataset (e.g. DoTA / DAD) to test generalization
+      of thresholds tuned on Nexar.
+- [ ] End-to-end learned risk (video → collision probability) as a
+      comparison arm against this interpretable modular stack.
+- [ ] Closed-loop simulation (CARLA): does the virtual brake actually avoid
+      the collision when it fires at the observed mTTA?
+- [ ] The user study, if not done now (three explanation conditions,
+      clarity/trust Likert, paired significance test).

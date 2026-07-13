@@ -26,16 +26,29 @@ from a3ps.risk.decision import DecisionEngine  # noqa: E402
 
 
 def make_forecaster_hook(config):
-    """Adapt KalmanCVForecaster to the Pipeline hook signature.
+    """Adapt a Forecaster (Kalman-CV or Seq2Seq) to the Pipeline hook signature.
 
     For each track whose buffer has enough history (buffer.ready), forecast
     from its image-space history and return a Prediction. collision_prob is
     left None until the risk stage (Phase 4).
+
+    ``config["forecaster"]`` selects the model: ``"kalman_cv"`` (default) or
+    ``"seq2seq"`` (loads ``config["seq2seq_weights"]``, default
+    ``notebooks/models/seq2seq_v1.pt``) -- used by scripts/run_ablations.py to
+    ablate the forecaster choice. Both implement the same
+    ``predict(history, dt, horizon_s) -> (means, stds)`` interface, so nothing
+    else in this hook needs to change.
     """
     predict_hz = float(config.get("predict_hz", 5))
     dt = 1.0 / predict_hz
     horizon_s = float(config.get("horizon_s", 4.0))
-    forecaster = KalmanCVForecaster()
+    forecaster_name = str(config.get("forecaster", "kalman_cv")).lower()
+    if forecaster_name == "seq2seq":
+        from a3ps.forecasting.seq2seq import Seq2SeqForecaster
+        weights = config.get("seq2seq_weights", "notebooks/models/seq2seq_v1.pt")
+        forecaster = Seq2SeqForecaster(weights_path=weights)
+    else:
+        forecaster = KalmanCVForecaster()
 
     def hook(track, ctx):
         buf = ctx["buffer"]
@@ -80,9 +93,14 @@ def make_risk_hook(config):
     fire an event), and store it on ``track.prediction``. Then the
     :class:`DecisionEngine` turns those probabilities into ALERT / VIRTUAL_BRAKE
     / THRESHOLD_LOWERED events. Returns the events emitted this frame.
+
+    ``config["ema_smoothing"]`` (default True) toggles the cross-frame EMA --
+    used by scripts/run_ablations.py to ablate smoothing. When False, each
+    frame's raw ``max_prob`` is used directly as ``collision_prob``.
     """
     engine = DecisionEngine(config)
     smoother = RiskSmoother(alpha=float(config.get("risk_ema_alpha", 0.4)))
+    ema_smoothing = bool(config.get("ema_smoothing", True))
     corridor_cache: dict = {}
 
     def _corridor(ctx):
@@ -118,7 +136,7 @@ def make_risk_hook(config):
             radius = actor_radius_for(tr.cls, config, space=space)
             max_prob, ttc = trajectory_collision_prob(
                 (means, stds), corridor, radius, dt)
-            smoothed = smoother.update(tr.id, max_prob)
+            smoothed = smoother.update(tr.id, max_prob) if ema_smoothing else max_prob
             pred.collision_prob = round(float(smoothed), 4)
             pred.ttc_s = ttc
 

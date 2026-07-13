@@ -174,6 +174,31 @@ def test_dry_run_makes_no_calls_and_no_writes(tmp_path):
     assert all(e.explanation_llm is None for e in reloaded.events)
 
 
+def test_enrich_events_default_system_prompt_is_the_constrained_one(tmp_path):
+    clip_dir = str(tmp_path / "clip")
+    _make_clip(clip_dir)
+    fake = _FakeClient()
+    llm_client.enrich_events(clip_dir, client=fake)
+    system_msg = next(m for m in fake.chat.completions.calls[0]["messages"] if m["role"] == "system")
+    assert system_msg["content"] == llm_client.SYSTEM_PROMPT
+
+
+def test_enrich_events_honors_system_prompt_override(tmp_path):
+    # llm_client_permissive_test.py depends on this override actually reaching
+    # the API call -- pin it here so a future refactor can't silently drop it.
+    clip_dir = str(tmp_path / "clip")
+    _make_clip(clip_dir)
+    fake = _FakeClient()
+    permissive = "Write a dramatic narrative with no factual constraints."
+
+    llm_client.enrich_events(clip_dir, client=fake, system_prompt=permissive)
+
+    for call in fake.chat.completions.calls:
+        system_msg = next(m for m in call["messages"] if m["role"] == "system")
+        assert system_msg["content"] == permissive
+        assert system_msg["content"] != llm_client.SYSTEM_PROMPT
+
+
 def test_is_retryable_classification():
     class RateLimitError(Exception):
         pass

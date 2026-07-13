@@ -52,6 +52,39 @@ def load_config(path: str) -> Dict[str, Any]:
         return yaml.safe_load(fh) or {}
 
 
+# Note surfaced verbatim in every meta.json under "per_stage_ms_note" -- see
+# build_per_stage_ms() below for why "perception" is reported as 0.0.
+PER_STAGE_MS_NOTE = (
+    "perception (YOLO detection + segmentation) and tracking (BoT-SORT "
+    "association) run as a SINGLE model.track() call in this architecture "
+    "(a3ps/tracking/tracker.py) -- there is no separate perception pass to "
+    "time independently without doubling inference cost. All of that "
+    "combined cost is attributed to 'tracking' below; 'perception' is "
+    "reported as 0.0 by convention so the four-stage schema stays intact "
+    "and the end-to-end sum is not double-counted."
+)
+
+
+def build_per_stage_ms(timings: Dict[str, float], n_frames: int) -> Dict[str, float]:
+    """Accumulated per-stage ms (from Pipeline.run's ``timings`` dict) -> the
+    paper's Table IV per-frame-average schema: perception, tracking,
+    forecasting, risk_decision (each a float, ms/frame).
+
+    Pure function of the accumulated totals (no cv2/YOLO dependency), so it's
+    unit-testable without a real video or model. See PER_STAGE_MS_NOTE for why
+    "perception" is always 0.0 here rather than a separately-measured value.
+    """
+    def per_frame(key: str) -> float:
+        return round(timings.get(key, 0.0) / n_frames, 2) if n_frames else 0.0
+
+    return {
+        "perception": 0.0,
+        "tracking": per_frame("track"),
+        "forecasting": per_frame("forecast"),
+        "risk_decision": per_frame("risk"),
+    }
+
+
 class Pipeline:
     def __init__(
         self,
@@ -289,14 +322,22 @@ class Pipeline:
             shutil.copyfile(video_path, os.path.join(out_dir, "raw.mp4"))
         result.meta = self._build_meta(video_path, fps, width, height, n_frames)
 
+        # Per-stage latency (Table IV) computed and attached BEFORE the
+        # meta.json write below, so it's actually persisted to disk --
+        # previously this was computed after the write and only ever lived on
+        # the in-memory `result` returned to the caller, so meta.json on disk
+        # never contained timing data (the root cause of it "not existing").
+        result.meta["per_stage_ms"] = build_per_stage_ms(timings, n_frames)
+        result.meta["per_stage_ms_note"] = PER_STAGE_MS_NOTE
+        result.meta["_timings_ms_per_frame"] = {
+            k: round(v / n_frames, 1) if n_frames else 0.0 for k, v in timings.items()
+        }
+
         result.save_json(os.path.join(out_dir, "events.json"))
         with open(os.path.join(out_dir, "meta.json"), "w", encoding="utf-8") as fh:
             import json
             json.dump(result.meta, fh, indent=2, ensure_ascii=False)
 
-        result.meta["_timings_ms_per_frame"] = {
-            k: round(v / n_frames, 1) if n_frames else 0.0 for k, v in timings.items()
-        }
         return result
 
     def _build_meta(self, video_path, fps, width, height, n_frames):

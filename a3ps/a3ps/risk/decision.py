@@ -138,6 +138,10 @@ class DecisionEngine:
         self.frames_to_confirm = int(config.get("frames_to_confirm", 3))
         self.cooldown_s = float(config.get("event_cooldown_s", 2.0))
         self.floor = float(config.get("threshold_floor", THRESHOLD_FLOOR))
+        # Ablation switch: when False, active_threshold ignores context flags
+        # entirely (always base_threshold) -- ``dynamic_threshold`` in
+        # scripts/run_ablations.py.
+        self.dynamic_threshold = bool(config.get("dynamic_threshold", True))
         # Allow config to override reductions, else use the module defaults.
         self.reductions = dict(CONTEXT_REDUCTIONS)
         self.reductions.update(config.get("context_reductions", {}) or {})
@@ -151,7 +155,13 @@ class DecisionEngine:
     # -- thresholds ---------------------------------------------------------
 
     def active_threshold(self, flags: Sequence[str]) -> float:
-        """base_threshold minus reductions for active flags, floored."""
+        """base_threshold minus reductions for active flags, floored.
+
+        When ``dynamic_threshold`` is False (ablation), context flags are
+        ignored entirely and this always returns a flat ``base_threshold``.
+        """
+        if not self.dynamic_threshold:
+            return max(self.floor, self.base_threshold)
         reduction = sum(self.reductions.get(f, 0.0) for f in set(flags))
         return max(self.floor, self.base_threshold - reduction)
 

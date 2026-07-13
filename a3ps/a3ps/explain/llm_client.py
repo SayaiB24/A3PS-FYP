@@ -130,13 +130,14 @@ def _is_retryable(exc: Exception) -> bool:
     return isinstance(status, int) and status >= 500
 
 
-def _call_once(client, model: str, max_tokens: int, image_b64: str, facts_text: str) -> str:
+def _call_once(client, model: str, max_tokens: int, image_b64: str, facts_text: str,
+                system_prompt: str = SYSTEM_PROMPT) -> str:
     data_url = f"data:{IMAGE_MEDIA_TYPE};base64,{image_b64}"
     resp = client.chat.completions.create(
         model=model,
         max_tokens=max_tokens,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": [
@@ -149,11 +150,12 @@ def _call_once(client, model: str, max_tokens: int, image_b64: str, facts_text: 
     return (resp.choices[0].message.content or "").strip()
 
 
-def _call_with_retries(client, model, max_tokens, image_b64, facts_text, max_retries=4) -> str:
+def _call_with_retries(client, model, max_tokens, image_b64, facts_text, max_retries=4,
+                        system_prompt: str = SYSTEM_PROMPT) -> str:
     delay = 1.0
     for attempt in range(max_retries + 1):
         try:
-            return _call_once(client, model, max_tokens, image_b64, facts_text)
+            return _call_once(client, model, max_tokens, image_b64, facts_text, system_prompt)
         except Exception as exc:  # noqa: BLE001 - re-raised unless transient
             if attempt >= max_retries or not _is_retryable(exc):
                 raise
@@ -174,6 +176,7 @@ def enrich_events(
     overwrite: bool = False,
     client: Any = None,
     max_retries: int = 4,
+    system_prompt: str = SYSTEM_PROMPT,
 ) -> ClipResult:
     """Enrich every event in ``<clip_dir>/events.json`` with an LLM narrative.
 
@@ -183,6 +186,13 @@ def enrich_events(
     the facts + keyframe are prepared and printed but no API call is made and
     nothing is written. ``client`` may be injected (tests); otherwise a
     ``groq.Groq`` client is created lazily from ``GROQ_API_KEY``.
+
+    ``system_prompt`` defaults to the real, facts-only-constrained
+    ``SYSTEM_PROMPT`` used in production. It exists as a parameter (rather
+    than being hardcoded in ``_call_once``) solely so
+    ``a3ps/explain/llm_client_permissive_test.py`` can override it with a
+    deliberately unconstrained prompt to reproduce a hallucination example for
+    the paper -- do not pass a different prompt anywhere in the real pipeline.
     """
     import cv2
 
@@ -231,7 +241,8 @@ def enrich_events(
                 continue
 
             event.explanation_llm = _call_with_retries(
-                client, model, max_tokens, image_b64, facts_text, max_retries)
+                client, model, max_tokens, image_b64, facts_text, max_retries,
+                system_prompt=system_prompt)
             enriched += 1
             print(f"  event {event.event_id} ({event.type}): {event.explanation_llm}")
     finally:

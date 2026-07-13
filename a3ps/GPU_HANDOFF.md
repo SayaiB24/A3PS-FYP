@@ -37,8 +37,10 @@ gitignored.
 9. Run `run_pipeline.py` on real clips — **risk_engine is now wired**, so this
    produces real ALERT/VIRTUAL_BRAKE events, not just tracking overlays.
    Update `dashboard/clips/manifest.json` to point at them.
-10. Run `eval_anticipation.py --run` over the real 120-clip `eval` split — the
-    headline mTTA / AP / false-alarm-rate numbers for the report.
+10. Sanity-check `eval_anticipation.py` on `dev` (instant, no GPU), then run it
+    with `--run` over the real 120-clip `eval` split — read the
+    **matched-subset mTTA** section (not the raw per-method row) for the
+    headline "A3PS warns N s earlier" number.
 11. (Optional, free) Run the Groq MLLM enrichment on 2-3 dev clips and
     eyeball the narratives for hallucination.
 12. Week 4, only when prepping the 5 final demo clips: per-clip BEV
@@ -480,15 +482,35 @@ lengthening `horizon_s` is the first thing to try.
 
 ## 10. Run the anticipation eval over the real eval split
 
+### 10.0 Sanity check on `dev` first (instant, no GPU)
+
+Before spending GPU time on the 120-clip eval split, confirm the script works
+against the 15 dev clips you already processed in step 9 (they already have
+`events.json` under `dashboard/clips/`):
+
+```powershell
+python scripts\eval_anticipation.py --index data\nexar\index.csv --split dev --clips-dir dashboard\clips
+```
+
+No `--run` needed — it just reads what's already there. Confirm the table and
+`eval/anticipation.md` / `eval/anticipation_per_clip.csv` are produced. ⚠️ The
+`dev` split only has **5 positive clips** (too small to draw conclusions or
+tune thresholds from) — it's a plumbing check, not the headline result. The
+real numbers only come from the 120-clip `eval` split below.
+
+### 10.1 The real run
+
 ```powershell
 python scripts\eval_anticipation.py --index data\nexar\index.csv --split eval --run
 ```
 `--run` processes every one of the 120 real `eval` clips through the full
 pipeline **with rendering disabled** (`render=False` — no annotated.mp4/raw.mp4,
 just `events.json`), so it is far faster than step 9. Still the GPU-heavy part
-of this step; strip `--run` to re-score clips already processed into
-`--clips-dir`. Point `--clips-dir` at a smaller pre-processed directory to
-iterate on a subset.
+of this step; it's **resumable** — if interrupted, re-run the same command and
+clips with an existing `events.json` are skipped. Strip `--run` afterward to
+re-score cheaply (e.g. after a config-threshold change to `run_pipeline`'s
+inputs) without re-processing already-cached clips. Point `--clips-dir` at a
+smaller pre-processed directory to iterate on a subset.
 
 **It scores two methods side by side and writes two files:**
 - **A3PS (proactive)** — the pipeline's forecast + risk ALERT/VIRTUAL_BRAKE
@@ -496,19 +518,37 @@ iterate on a subset.
 - **Reactive-proximity baseline** — a naive ADAS that "brakes" the first frame
   any actor comes physically close to the ego corridor (BEV < 2.0 m, else image
   < 8% of frame height — identical to the dashboard's reactive-ADAS marker). No
-  forecasting, so it can only react late; A3PS's mTTA advantage over it is the
-  headline "we warn N seconds earlier" number.
+  forecasting, so it can only react once the actor is already close.
 
 Outputs:
 - `eval/anticipation.md` — the comparison table (detection rate, false-alarm
-  rate, mTTA for **both** methods) plus the anticipation-gain line.
+  rate, mTTA for **both** methods), **plus a `## Matched-subset mTTA` section**.
 - `eval/anticipation_per_clip.csv` — one row per clip: label, event time, and
   each method's alert time / TTA / flagged / outcome.
 
-Both methods share the same metric definitions (detection = alerted *before* the
-annotated event time; false alarm = any alert on a negative), so the comparison
-is apples-to-apples. Expect A3PS to show a **higher mTTA** (fires earlier) than
-the reactive baseline — that gap is the whole point of the forecast layer.
+### 10.2 How to read the result — use the matched-subset number, not the raw mTTA row
+
+**Do not** read the difference between the two per-method mTTA values in the
+main table as an anticipation-gain claim — they're each averaged over a
+*different* true-positive set (different n, different clips), so a method with
+lower recall/higher false-alarm rate can show a misleadingly early mTTA just
+from which (easier/fewer) clips it happens to count.
+
+The **`## Matched-subset mTTA`** section is the fair comparison: mTTA for both
+methods computed **only over positives BOTH correctly anticipate**. That
+section's gain line — `A3PS is X.X s earlier/later than the reactive baseline`
+— is the number substantiating (or refuting) the "A3PS warns earlier" claim.
+
+⚠️ **Do not assume the sign in advance.** On the 15-clip `dev` sanity run, the
+matched-subset result came back **negative** (A3PS ~2.9 s *later* than the
+naive baseline on the 4 clips both caught) — likely because `VIRTUAL_BRAKE`
+requires `collision_prob ≥ base_threshold` held for `frames_to_confirm` (3)
+consecutive frames plus EMA smoothing (§9.1), while the reactive baseline fires
+on the very first frame proximity crosses. If the real 120-clip `eval` run's
+matched-subset gain is also negative, that is a real, actionable result — not
+a fluke — and the fix is the same tuning knobs from §9.1 (lower
+`base_threshold`, raise `horizon_s`, and/or lower `frames_to_confirm`),
+followed by re-running this step to confirm the gain turns positive.
 
 ---
 
@@ -558,7 +598,7 @@ For each of the 5 final demo clips:
 | 7 | `notebooks/models/seq2seq_v1.pt` | Loads via `Seq2SeqForecaster(weights_path=...)`; note the printed **best val ADE** |
 | 8 | `eval/forecast_table.md` | Has a populated `Seq2Seq-LSTM` row from the *retrained* model (not the 22-window placeholder) |
 | 9 | `dashboard/clips/<id>/{annotated.mp4, events.json, meta.json}` for several dev clips + updated `dashboard/clips/manifest.json` | `meta.json.stages.risk_engine == true`; `events.json` has non-zero `events` for at least one positive clip |
-| 10 | `eval/anticipation.md` + `eval/anticipation_per_clip.csv` | A3PS-vs-reactive-baseline detection rate / false-alarm rate / mTTA over the 120-clip eval split; A3PS mTTA > reactive mTTA (fires earlier); per-clip CSV has both methods |
+| 10 | `eval/anticipation.md` + `eval/anticipation_per_clip.csv` | A3PS-vs-reactive-baseline detection rate / false-alarm rate / mTTA over the 120-clip eval split, incl. the `## Matched-subset mTTA` section; per-clip CSV has both methods. **Read the matched-subset gain, don't assume its sign** — if negative, tune per §9.1/§10.2 and re-run before reporting |
 | 11 (optional) | enriched `events.json` with populated `explanation_llm` on 2-3 clips | Narratives mention only real scene elements — no hallucinated objects/numbers |
 
 ---
@@ -657,7 +697,9 @@ python scripts\eval_forecast.py --weights notebooks\models\seq2seq_v1.pt
 # real clips through the full pipeline (perception+tracking+forecast+risk+decision)
 python scripts\run_pipeline.py --video data\dev_clips\dev01.mp4 --out dashboard\clips\dev01\
 
-# anticipation eval over the real 120-clip eval split
+# anticipation eval: sanity check on dev first (instant, no GPU)...
+python scripts\eval_anticipation.py --index data\nexar\index.csv --split dev --clips-dir dashboard\clips
+# ...then the real run over the 120-clip eval split
 python scripts\eval_anticipation.py --index data\nexar\index.csv --split eval --run
 
 # optional: Groq narrative enrichment

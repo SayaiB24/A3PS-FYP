@@ -62,3 +62,33 @@ def test_active_threshold_updates_across_frames_as_flags_change():
     ctx2 = _ctx(1, 0.2, flags=["crosswalk_ahead", "intersection"])
     hook([_track()], ctx2)
     assert ctx2["context"]["active_threshold"] == 0.55
+
+
+def _track_in_corridor():
+    """A track whose forecast sits inside CORRIDOR -- collision_prob > 0."""
+    means = [[300.0, 500.0]] * 20
+    stds = [[6.0, 6.0]] * 20
+    pred = Prediction(horizon_s=4.0, dt=0.2, mean_img=means, std_bev=stds)
+    return TrackState(id=1, cls="person", bbox=[0, 0, 10, 10],
+                      centroid_img=[300.0, 500.0], prediction=pred)
+
+
+def test_ema_smoothing_toggle_changes_response_to_a_sudden_jump():
+    """A track jumps from far-from-corridor (prob ~0) to squarely inside it
+    (prob ~1) between frame 0 and frame 1, same track id both times. With
+    ``ema_smoothing`` on (default), the EMA blends the jump with the prior
+    (near-zero) state, so the reported prob lags below the raw value; with it
+    off, the raw per-frame value is used directly, so the jump shows up in
+    full immediately.
+    """
+    def second_frame_prob(config):
+        hook = rp.make_risk_hook(config)
+        hook([_track()], _ctx(0, 0.0, flags=[]))          # far -> prob ~0
+        tr = _track_in_corridor()
+        tr.id = 1                                          # same id -> same EMA state
+        hook([tr], _ctx(1, 0.2, flags=[]))
+        return tr.prediction.collision_prob
+
+    smoothed = second_frame_prob(CONFIG)                    # ema_smoothing defaults True
+    raw = second_frame_prob({**CONFIG, "ema_smoothing": False})
+    assert raw > smoothed

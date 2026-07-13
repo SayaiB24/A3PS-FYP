@@ -24,6 +24,13 @@ threshold_floor: 0.45     # active_threshold never drops below this
 risk_ema_alpha: 0.4       # cross-frame EMA on each track's collision prob
 mask_poly_max_points: 40
 
+# Ablation switches (scripts/run_ablations.py flips these one variant at a
+# time; defaults below reproduce the standard pipeline).
+forecaster: kalman_cv     # kalman_cv | seq2seq (seq2seq loads seq2seq_weights)
+seq2seq_weights: notebooks/models/seq2seq_v1.pt
+dynamic_threshold: true   # false -> active_threshold ignores context flags (flat base_threshold)
+ema_smoothing: true       # false -> use each frame's raw collision prob (no cross-frame EMA)
+
 # Actor collision radius by class, used to dilate the ego corridor when
 # integrating collision probability (Minkowski sum with a disk). BEV values are
 # physical metres; the pixel values are rough stand-ins used while forecasting

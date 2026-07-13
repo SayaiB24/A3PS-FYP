@@ -51,6 +51,16 @@ def test_active_threshold_reductions_and_floor():
     assert eng2.active_threshold(["crosswalk_ahead", "intersection"]) == 0.45
 
 
+def test_dynamic_threshold_false_ignores_context_flags():
+    # Ablation switch: with dynamic_threshold off, active_threshold is flat
+    # (always base_threshold) regardless of which context flags are active.
+    eng = DecisionEngine({**CONFIG, "dynamic_threshold": False})
+    assert eng.active_threshold([]) == 0.75
+    assert eng.active_threshold(["crosswalk_ahead"]) == 0.75
+    assert eng.active_threshold(
+        ["crosswalk_ahead", "intersection", "dense_traffic"]) == 0.75
+
+
 def test_active_context_flags_spans_and_dense_traffic():
     spans = [{"t0": 3.0, "t1": 9.0, "flag": "crosswalk_ahead"}]
     assert active_context_flags(1.0, 2, spans) == []

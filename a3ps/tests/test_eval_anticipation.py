@@ -111,6 +111,105 @@ def test_matched_subset_ignores_unprocessed_rows():
 
 
 # ---------------------------------------------------------------------------
+# threshold sweep (Step 7.1): cache + in-memory precision/recall
+# ---------------------------------------------------------------------------
+
+def _clip_with_frame_probs(clip_id, probs_by_t):
+    """A minimal real ClipResult with one frame per (t, prob) pair."""
+    frames = []
+    for t, prob in probs_by_t:
+        pred = Prediction(horizon_s=4.0, dt=0.2, mean_img=[[0.0, 0.0]], collision_prob=prob)
+        tr = TrackState(id=1, cls="car", bbox=[0, 0, 10, 10], centroid_img=[5.0, 5.0], prediction=pred)
+        frames.append(FrameRecord(frame_idx=int(t / 0.5), t=t, tracks=[tr]))
+    return ClipResult(meta={"clip_id": clip_id}, frames=frames, events=[])
+
+
+def test_cache_frame_probs_round_trips(tmp_path):
+    clip = _clip_with_frame_probs("c1", [(0.0, 0.3), (0.5, 0.7), (1.0, 0.95)])
+    cache_dir = str(tmp_path / "cache")
+    path = ea.cache_frame_probs(clip, "c1", cache_dir)
+    assert os.path.isfile(path)
+
+    loaded = ea.load_frame_prob_cache(cache_dir, "c1")
+    assert loaded == [(0.0, 0.3), (0.5, 0.7), (1.0, 0.95)]
+
+
+def test_cache_frame_probs_skips_existing_unless_forced(tmp_path):
+    cache_dir = str(tmp_path / "cache")
+    clip_a = _clip_with_frame_probs("c1", [(0.0, 0.1)])
+    clip_b = _clip_with_frame_probs("c1", [(0.0, 0.9)])   # different content, same clip_id
+
+    ea.cache_frame_probs(clip_a, "c1", cache_dir)
+    ea.cache_frame_probs(clip_b, "c1", cache_dir)         # no force -> should NOT overwrite
+    assert ea.load_frame_prob_cache(cache_dir, "c1") == [(0.0, 0.1)]
+
+    ea.cache_frame_probs(clip_b, "c1", cache_dir, force=True)
+    assert ea.load_frame_prob_cache(cache_dir, "c1") == [(0.0, 0.9)]
+
+
+def test_load_frame_prob_cache_missing_returns_none(tmp_path):
+    assert ea.load_frame_prob_cache(str(tmp_path), "does_not_exist") is None
+
+
+def test_sweep_thresholds_precision_recall(tmp_path):
+    cache_dir = str(tmp_path / "cache")
+    # Positive clip: event at t=2.0. Frames before/at the event reach 0.7 then
+    # 0.9; a later 0.95 frame is AFTER the event and must not count as a hit.
+    pos_clip = _clip_with_frame_probs(
+        "p1", [(0.0, 0.3), (0.5, 0.5), (1.0, 0.7), (1.5, 0.9), (2.5, 0.95)])
+    # Negative clip: no event_time_s, so any frame crossing threshold is a
+    # false alarm regardless of when it occurs.
+    neg_clip = _clip_with_frame_probs("n1", [(0.0, 0.1), (0.5, 0.2)])
+
+    ea.cache_frame_probs(pos_clip, "p1", cache_dir)
+    ea.cache_frame_probs(neg_clip, "n1", cache_dir)
+
+    rows = [
+        {"clip_id": "p1", "label": 1, "event_time_s": 2.0, "processed": True},
+        {"clip_id": "n1", "label": 0, "event_time_s": None, "processed": True},
+    ]
+
+    sweep = ea.sweep_thresholds(rows, cache_dir, thresholds=[0.15, 0.6, 0.8, 0.99])
+    by_thr = {row["threshold"]: row for row in sweep}
+
+    # thr=0.15: neg's 0.2 frame >= 0.15 -> FP; pos's <=te frames reach 0.9 -> TP.
+    assert by_thr[0.15]["tp"] == 1 and by_thr[0.15]["fp"] == 1 and by_thr[0.15]["fn"] == 0
+    # thr=0.6: neg never reaches 0.6 -> no FP; pos's t=1.0 (0.7, <= te) -> TP.
+    assert by_thr[0.6]["tp"] == 1 and by_thr[0.6]["fp"] == 0 and by_thr[0.6]["fn"] == 0
+    # thr=0.8: pos's t=1.5 (0.9, <= te) still qualifies -> TP.
+    assert by_thr[0.8]["tp"] == 1 and by_thr[0.8]["fp"] == 0
+    # thr=0.99: only the 0.95 frame reaches it, but that frame is AFTER the
+    # event (t=2.5 > te=2.0) -> excluded -> FN, not TP.
+    assert by_thr[0.99]["tp"] == 0 and by_thr[0.99]["fn"] == 1
+
+    assert abs(by_thr[0.15]["precision"] - 0.5) < 1e-9   # 1 tp / (1 tp + 1 fp)
+    assert by_thr[0.6]["precision"] == 1.0
+    assert by_thr[0.6]["recall"] == 1.0
+
+
+def test_sweep_thresholds_skips_rows_without_a_cache(tmp_path):
+    cache_dir = str(tmp_path / "cache")   # empty -- nothing cached
+    rows = [{"clip_id": "p1", "label": 1, "event_time_s": 2.0, "processed": True}]
+    sweep = ea.sweep_thresholds(rows, cache_dir, thresholds=[0.5])
+    assert sweep[0]["tp"] == 0 and sweep[0]["fp"] == 0 and sweep[0]["fn"] == 0
+
+
+def test_write_pr_csv(tmp_path):
+    path = str(tmp_path / "pr.csv")
+    sweep = [
+        {"threshold": 0.40, "precision": 1.0, "recall": 0.5, "tp": 1, "fp": 0, "fn": 1},
+        {"threshold": 0.45, "precision": float("nan"), "recall": float("nan"),
+         "tp": 0, "fp": 0, "fn": 0},
+    ]
+    ea.write_pr_csv(path, sweep)
+    with open(path, encoding="utf-8") as fh:
+        content = fh.read()
+    assert "threshold,precision,recall" in content
+    assert "0.40,1.0000,0.5000" in content
+    assert "0.45,," in content   # NaN serializes to empty, not "nan"
+
+
+# ---------------------------------------------------------------------------
 # reading processed clips end-to-end (writes real events.json fixtures)
 # ---------------------------------------------------------------------------
 
