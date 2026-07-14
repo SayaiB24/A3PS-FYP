@@ -50,6 +50,12 @@ python scripts\eval_forecast.py --weights notebooks\models\seq2seq_prev.pt --out
 
 **Needs on disk:** `data/trajectories/*.npz` (run `mine_trajectories.py` first) and a trained `.pt` weights file (run `notebooks/train_forecaster.ipynb` first). Without weights, only the Kalman-CV row prints.
 
+**✅ Expected good outcome (what the paper needs):**
+- The **Seq2Seq-LSTM row should be ≤ Kalman-CV at the 4 s horizon** (that's the learned model justifying its existence). Current real result: LSTM 56.33 vs Kalman 61.27 px ADE@4s, FDE 99.74 vs 122.55 — that IS the good outcome; cite it as "the learned forecaster wins at the safety-relevant long horizon."
+- Kalman being marginally better at 1-2 s (within ~1-2 px) is **normal and fine** — short-horizon motion is near-constant-velocity, which Kalman computes optimally. Say so in the paper; don't hide it.
+- Sanity bounds: ADE@1s ≈ 15-20 px and ADE@4s ≈ 50-65 px on ~1280 px frames (~1-5% of frame width) are plausible; ADE@4s > 150 px or ADE@1s > 50 px means something is broken (wrong val split, wrong weights, corrupted shards).
+- **If the LSTM loses at 4 s after a retrain:** don't force it — report the tie honestly (the earlier 172-window run did exactly that) and attribute it to training-data volume/diversity; the numbers to grow are `total_windows` (target 10k+) and class mix in `stats.json`. Retrain and re-eval after mining more clips. Never mix numbers from two different mined-pool sizes in one comparison.
+
 ---
 
 ## 2. Anticipation performance — detection rate / false-alarm rate / mTTA
@@ -85,6 +91,14 @@ For both: **detection rate** (fraction of positives alerted *before* the annotat
 
 **Needs on disk:** `data/nexar/index.csv` with the target split populated (`prepare_nexar.py`); for `--run`, the raw eval-split videos in `data/nexar/videos/`.
 
+**✅ Expected good outcome (what the paper needs):**
+- **False-alarm rate is the gatekeeper metric — check it FIRST.** Target **≤ 0.20** (≤ 0.30 is the outer limit of defensible). If FAR is high, detection and mTTA are automatically inflated and mean nothing (see the failure-case section at the bottom of this file — this actually happened).
+- **Detection rate ≥ 0.75** at that FAR.
+- **mTTA in roughly the 2-6 s range.** A believable anticipation window: enough to brake, short enough to be a real prediction. ⚠️ **An mTTA close to the clip length (e.g. 15-18 s on ~18 s Nexar clips) is a red flag, not a triumph** — it means alerts fire at clip start, i.e. the system is effectively always-on. Sanity-check against `event_time_s` in index.csv: mTTA cannot honestly approach the full clip duration.
+- **Matched-subset mTTA gain positive** (A3PS earlier than the reactive baseline); anything clearly positive (+0.5 to +2 s) is a solid headline. A negative gain at low FAR = tune `base_threshold`/`frames_to_confirm`/`horizon_s` and re-run; a "positive" gain at high FAR = meaningless, fix FAR first.
+- **A3PS should beat the reactive baseline on false-alarm rate** at comparable detection — that's the "forecasting adds discrimination, not just earliness" claim.
+- Order of validity: **first** FAR in range → **then** detection → **then** read mTTA/matched-subset. Never quote mTTA from a run whose FAR is out of range.
+
 ---
 
 ## 3. Threshold sweep / precision-recall curve (Step 7.1)
@@ -109,6 +123,14 @@ python scripts\eval_anticipation.py --index data\nexar\index.csv --split eval --
 **Why the caching step matters:** re-scoring at 11 different thresholds the "obvious" way would mean re-running the full GPU pipeline 11 times (11x the cost of metric #2). Caching each frame's max probability once means the sweep is instead 11 cheap in-memory comparisons over already-extracted numbers — the entire sweep costs nothing beyond the one pipeline pass already paid for by metric #2.
 
 **Needs on disk:** clips already processed by metric #2 (`events.json` in `--clips-dir`). No extra GPU time beyond that.
+
+**✅ Expected good outcome (what the paper needs):**
+- A curve with a visible **knee**: precision high and flat at high thresholds, dropping as threshold falls and recall rises. The chosen operating point (`base_threshold` in the config) should sit **at or near that knee** — that's the whole justification story for Table/Figure purposes.
+- At the chosen threshold, **precision ≥ ~0.7** with recall ≥ ~0.75 is a healthy point for this scale of dataset.
+- **Degenerate shapes and what they mean:**
+  - *Flat high recall + low precision at every threshold (even 0.90)* → the probabilities themselves don't separate positives from negatives; **no threshold can fix it** — the risk logic needs the approach-gating fix (failure-case section below), then re-run + `--force-cache`.
+  - *Everything at 0 recall* → probabilities never reach 0.40; corridor/radius config likely too tight, or clips processed with the wrong config.
+- After ANY change to config or risk code, the cache is stale: re-run with a fresh `--clips-dir` (or delete the old one) **and** pass `--force-cache`.
 
 ---
 
@@ -150,6 +172,12 @@ python scripts\run_ablations.py --index data\nexar\index.csv --split eval
 
 **Needs on disk:** same as metric #2. **Expect roughly 4x the GPU time of one `eval_anticipation.py --run`**, since it processes all 120 eval clips 4 separate times (once per non-reused variant).
 
+**✅ Expected good outcome (what the paper needs):**
+- The **full system (Kalman-CV + dynamic threshold + EMA on) should be best or tied-best** on detection at comparable-or-lower false-alarm rate. Each ablated row degrading *something* is the point of the table.
+- Expected directions: **EMA off** → false-alarm rate rises (single-frame glitches now fire events), possibly mTTA slightly up (no smoothing lag). **Static threshold** → on clips with context annotations, later alerts / missed detections; if no `context.json` files exist for eval clips this row will ≈ equal the baseline — say so rather than inventing a difference. **Seq2Seq forecaster** → similar detection, watch whether mTTA improves (long-horizon accuracy translating into earlier warnings) — either result is reportable.
+- **Run this only AFTER metric #2's numbers are healthy** (FAR in range). Ablating a saturated, always-on system produces six rows of equally meaningless numbers and wastes a night of GPU.
+- If a variant row looks absurd (e.g. FAR 0 with detection 0), that variant's clips likely failed to process — check `eval/ablation/<slug>/` for empty `events.json` before believing the row.
+
 ---
 
 ## 5. Qualitative figure — before/ALERT/VIRTUAL_BRAKE/after
@@ -174,6 +202,12 @@ python scripts\make_qual_figure.py --clip dashboard\clips\dev14 --out eval\figur
 **Why this exists:** the report needs a concrete, honest "here is what the system actually saw and did" visual for one real incident — not a schematic — including the literal deterministic explanation text a user would have seen, for the XAI/explainability requirement.
 
 **Needs on disk:** one positive clip already run through `scripts/run_pipeline.py` (with rendering), containing at least one `VIRTUAL_BRAKE` event. (Verified end-to-end against the real `dashboard/clips/dev14` clip.)
+
+**✅ Expected good outcome (what the paper needs):**
+- The four panels should tell the story visually without the caption: panel 1 (before ALERT) actor green/amber and clearly not yet threatening → panel 2 (ALERT) risk color changed → panel 3 (VIRTUAL_BRAKE) red mask + red border, **visibly BEFORE the collision moment** → panel 4 (after) still pre-impact.
+- The timestamps under the panels are evidence: `t(BRAKE)` must be **earlier than the clip's `event_time_s`** in index.csv — check this number explicitly before using the figure. A figure where the brake panel is at/after the impact undermines the whole claim; pick a different clip or fix timing first (failure-case section below).
+- The caption's `explanation_template` should read sensibly against the image (right actor class, plausible TTC). If the motion phrase says "approaching head-on" for a car that visibly isn't, pick another incident (`--actor-id`) — don't publish a mismatched caption.
+- Pick a "hero" clip where the geometry is clean: one clear threatening actor, visible corridor, not a 9-event pileup like dev15.
 
 ---
 
@@ -209,6 +243,13 @@ python scripts\run_pipeline.py --video data\dev_clips\dev03.mp4 --out dashboard\
 
 **Needs on disk:** nothing beyond what `run_pipeline.py` already needs (a video + config). Verified end-to-end on this checkout: ran 3 real dev clips, confirmed `per_stage_ms` is now genuinely written to `meta.json` on disk, and confirmed `scripts/collect_paper_stats.py`'s Section 4 correctly aggregates it (mean/std/n across clips, plus end-to-end mean and implied FPS).
 
+**✅ Expected good outcome (what the paper needs):**
+- **On the GPU laptop:** `tracking` ≈ **20-60 ms/frame** (fused YOLO+BoT-SORT), `forecasting` and `risk_decision` each **< 5 ms/frame**, end-to-end mean **< ~100 ms/frame → implied ≥ 10 FPS**. Those are publishable "near-real-time" numbers.
+- **On the CPU laptop:** tracking ≈ 800-1500 ms/frame is normal (~0.7-1 FPS). These are 20-40x worse than GPU — **only usable in the paper if explicitly labeled CPU**; never present them as system performance.
+- Verify which machine produced the numbers before pasting: `paper_stats_summary.md` §2 must show `cuda_available: True` + a GPU name for the headline table.
+- Red flags: `forecasting` > 50 ms/frame on GPU (LSTM accidentally selected, or per-track loop exploding on a crowded clip — check which config the clips were run with in their meta.json), or tracking four-digit ms on the GPU laptop (CUDA silently unavailable — reinstall torch per `execution.md` step 2).
+- Measure over **3+ clips** so the std column is meaningful; state mean ± std in the table.
+
 ---
 
 ## 7. Hallucination before/after example (Section VII.B)
@@ -231,6 +272,11 @@ python -m a3ps.explain.llm_client_permissive_test dashboard\clips\ped_crossing_0
 
 **What "reasoning" to check when you read the output:** the permissive narrative should mention something **not present** in the real structured facts/keyframe (an invented object, a fabricated number, an assumed cause) — that's the hallucination to quote. If the permissive prompt *also* comes back accurate, the underlying vision model may just be reliably grounded regardless of prompt — try a busier/more ambiguous clip, or note in the paper that a hallucination could not be reproduced even under a relaxed prompt (still a legitimate, honestly-reported finding).
 
+**✅ Expected good outcome (what the paper needs):**
+- One quotable pair on the same event: the **permissive** narrative contains ≥1 concrete invented element (an object not in frame, a number not in the facts, a fabricated cause like "swerving to avoid a dog"), and the **constrained** narrative on the same event mentions only real facts.
+- Verify the constrained one yourself against the keyframe: right actor class, P/TTC matching the event JSON, no extra objects. If the *constrained* prompt hallucinates, that's a real finding — tighten `SYSTEM_PROMPT` in `a3ps/explain/llm_client.py`, re-run with `--overwrite`, and keep the before/after of the *prompt* change instead.
+- In the paper, disclose that the "before" was reproduced under a deliberately relaxed prompt for illustration.
+
 ---
 
 ## 8. User study (Section VII.C, claim C3) — a decision, not a script
@@ -242,6 +288,152 @@ python -m a3ps.explain.llm_client_permissive_test dashboard\clips\ped_crossing_0
 - **If you don't:** state plainly in the paper that the user study is left to future work, and that claim C3 currently rests on the structural-faithfulness argument (deterministic `explanation_template` always populated, LLM narrative is optional enrichment) plus the hallucination-mitigation example from §7 above.
 
 **Do not leave Section VII.C blank either way** — an explicit limitation statement reads as a considered scope decision; a blank section reads as unfinished.
+
+**✅ Expected good outcome (what the paper needs):** either (a) mean clarity/trust ratings where `template+LLM ≥ template > none`, with a paired test (t-test or Wilcoxon) showing the template-vs-none difference significant at p < 0.05 over 15-25 participants; or (b) one clear sentence that the study is future work and C3 rests on structural faithfulness + the §7 example. Both are acceptable outcomes; silence is not.
+
+---
+
+## ⚠️ Failure cases — how to read bad numbers and exactly what to do (no assistant needed)
+
+This section exists because it happened. Work through it top-to-bottom when a
+metric comes out wrong; every step is a concrete command or a specific edit.
+
+### Case 1 (REAL, observed on the first full 120-clip eval run): sky-high false-alarm rate
+
+**The numbers that came back:**
+
+| | detect | false-alarm | mTTA |
+|---|---|---|---|
+| A3PS | 0.917 | **0.767** | 16.11 s |
+| Reactive baseline | 0.967 | **0.783** | 17.92 s |
+
+**How to recognize this case:** false-alarm rate far above 0.3 for BOTH
+methods, AND mTTA suspiciously close to the full clip length (~16-18 s on
+~18 s clips). Detection looks great — ignore it, it's an artifact.
+
+**What it means:** the system is effectively **always-on** — alerts fire in
+the first seconds of nearly every clip, positive or negative. An always-on
+alarm trivially gets ~1.0 detection and mTTA ≈ event time. None of the three
+numbers is publishable from such a run, and the reactive baseline "winning"
+detection/mTTA is exactly the signature (the trigger-happier system always
+wins when everything saturates).
+
+**Root cause in this pipeline:** the risk math scores *presence in the ego
+corridor*, not *approach*. A lead vehicle driving ahead in your lane sits
+inside the corridor **by definition, every frame** — its forecast keeps
+sigma-point mass in the dilated corridor → sustained high collision_prob →
+ALERT/BRAKE on any clip with a car in front. Dev-split numbers looked fine
+earlier (FAR 0.20) only because most dev negatives are empty roads; eval
+negatives are normal traffic. The reactive baseline (raw proximity) has the
+identical blind spot, hence its equally bad FAR.
+
+**Recovery procedure — do these IN ORDER:**
+
+**Step 1 — confirm the diagnosis (5 minutes, no GPU).**
+Open `eval/anticipation_per_clip.csv`. Filter to rows with
+`reactive_outcome`/`a3ps_outcome` = `FALSE_ALARM`. Look at
+`a3ps_first_alert_t`: if most are within the first ~0-3 s of the clip, the
+lead-vehicle/presence problem is confirmed.
+
+**Step 2 — run the free threshold sweep (no GPU).**
+```powershell
+python scripts\eval_anticipation.py --index data\nexar\index.csv --split eval --sweep
+```
+Open `eval/pr_curve_data.csv`. Question: does ANY threshold up to 0.90 give
+acceptable precision? If yes (precision ≥ ~0.7 somewhere), you may get away
+with config-only changes (Step 3). If precision stays poor even at 0.90,
+thresholding cannot fix it — go to Step 4 (code change).
+
+**Step 3 — config-only mitigations (`configs/default.yaml`), cheapest first:**
+1. `base_threshold`: raise toward the best sweep point (e.g. 0.85).
+2. `ego_corridor.top_y_frac`: `0.60` → `0.70` — shortens the corridor so the
+   far-away/vanishing-point region (where every vehicle visually overlaps
+   the lane) stops scoring.
+3. `actor_radius_px`: reduce (e.g. car 20 → 12) — less dilation, less
+   accidental overlap.
+4. `frames_to_confirm`: 3 → 5 — requires longer persistence before an event.
+After each change: **re-run on a FRESH clips dir** (resume would silently
+reuse old results!) and re-score:
+```powershell
+python scripts\eval_anticipation.py --index data\nexar\index.csv --split eval --run --clips-dir eval\anticipation_v2 --out eval\anticipation_v2.md --per-clip-csv eval\anticipation_per_clip_v2.csv
+```
+Keep versioned output names (v2, v3…) so runs stay comparable.
+
+**Step 4 — the real fix (small code patch): gate risk on APPROACH, not presence.**
+The physically correct discriminator in image space is **looming** (bbox
+expansion): an actor you are closing on grows in the image; a lead car at
+constant gap stays constant size. (Classic tau-theory: TTC ≈ h / (dh/dt).)
+Note: TTC-gating on the existing `ttc_s` does NOT work here — a lead car
+permanently inside the corridor gets `ttc_s ≈ 0.2 s` from step 1, so it
+passes any TTC gate.
+
+Edit `scripts/run_pipeline.py`, inside `make_risk_hook`:
+
+a) Near the top of `make_risk_hook` (after `smoother = ...`), add a
+per-track bbox-height memory and the gate parameters:
+```python
+    bbox_hist: dict = {}          # track_id -> list of (t, bbox_height)
+    LOOM_WINDOW_S = 1.0           # compare height ~1 s apart
+    LOOM_MIN_GROWTH = 0.06        # require >=6% height growth over the window
+    LOOM_DAMP = 0.15              # damp factor for non-approaching actors
+```
+
+b) Inside the `for tr in tracks:` loop, right BEFORE
+`smoothed = smoother.update(...)`, insert:
+```python
+            # --- approach gate (looming): damp prob for actors we are not
+            # closing on (e.g. a lead car at constant gap sits in the
+            # corridor forever but is not a collision threat). ---
+            h_now = float(tr.bbox[3] - tr.bbox[1])
+            hist = bbox_hist.setdefault(tr.id, [])
+            hist.append((ctx["t"], h_now))
+            while hist and hist[0][0] < ctx["t"] - LOOM_WINDOW_S - 0.2:
+                hist.pop(0)
+            h_then = hist[0][1] if hist else h_now
+            growing = h_then > 1e-6 and (h_now / h_then - 1.0) >= LOOM_MIN_GROWTH
+            if not growing:
+                max_prob *= LOOM_DAMP
+```
+
+c) Re-run tests (`python -m pytest -q` — expect all green; the gate only
+touches the hook), then re-run the eval on a fresh clips dir (command in
+Step 3) and re-sweep with `--force-cache`.
+
+**Step 5 — verify the fix worked.** Success criteria, in order: FAR drops to
+≤ ~0.2-0.3; detection stays ≥ ~0.75 (if detection collapsed, the gate is too
+aggressive — lower `LOOM_MIN_GROWTH` to 0.03-0.04 or raise `LOOM_DAMP` to
+0.3); mTTA lands in a *believable* 2-6 s range; matched-subset gain
+positive. Tune only one knob per re-run and keep every versioned report.
+
+**Step 6 — if targets still aren't reachable,** report the best honest
+operating point from the PR curve and state the limitation (presence-based
+corridor risk over-triggers in dense traffic; approach-gating mitigates but
+does not eliminate it) — a documented limitation with a PR curve is
+publishable; a fabricated FAR is not.
+
+### Case 2: everything at zero (no alerts anywhere)
+Recognize: detection ≈ 0, FAR ≈ 0, mTTA n/a. Causes, in likelihood order:
+clips processed with a broken/over-tightened config (check `meta.json` →
+`config.base_threshold`), corridor shrunk too far, gate from Case 1 Step 4
+too aggressive, or empty `events.json` files (processing crashed — re-run
+`--run` and watch for per-clip errors). Fix the cause, fresh clips dir,
+re-run.
+
+### Case 3: metrics disagree with the dashboard
+Recognize: eval says a clip alerted but the dashboard shows nothing (or vice
+versa). Cause: the dashboard folder and the eval clips dir hold DIFFERENT
+runs of the same clip (e.g. dashboard from step 6 with old config, eval from
+`--run` with new config). Fix: re-run `run_pipeline.py` for the dashboard
+copies after any config change; the junction trick makes dev clips share one
+folder, so re-running once updates both views.
+
+### Case 4: numbers changed after adding data
+Recognize: previously-recorded metrics shift although "nothing changed."
+Cause: `prepare_nexar.py` re-picks splits when the pool changes (dev = 15
+shortest; eval fixed at 60+60 but *which* negatives can rotate) — and the
+forecast val split changes with the mined pool. Rule: after adding data,
+re-run the full chain (prepare → pipeline/dev → eval) and version the
+outputs; never mix pre- and post-addition numbers in one table.
 
 ---
 
