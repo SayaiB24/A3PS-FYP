@@ -17,6 +17,19 @@
       "forecaster": true,
       "risk_engine": true,
       "explainer": false
+    },
+    "per_stage_ms": {
+      "perception": 0.0,
+      "tracking": 67.29,
+      "forecasting": 0.0,
+      "risk_decision": 0.02
+    },
+    "per_stage_ms_note": "perception (YOLO detection + segmentation) and tracking (BoT-SORT association) run as a SINGLE model.track() call in this architecture (a3ps/tracking/tracker.py) -- there is no separate perception pass to time independently without doubling inference cost. All of that combined cost is attributed to 'tracking' below; 'perception' is reported as 0.0 by convention so the four-stage schema stays intact and the end-to-end sum is not double-counted.",
+    "_timings_ms_per_frame": {
+      "track": 67.3,
+      "forecast": 0.0,
+      "risk": 0.0,
+      "render": 8.6
     }
   },
   "frames": [
