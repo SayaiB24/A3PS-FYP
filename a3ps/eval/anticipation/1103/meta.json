@@ -1,0 +1,20 @@
+{
+  "clip_id": "01103",
+  "source_video": "raw.mp4",
+  "fps": 30.0,
+  "width": 1280,
+  "height": 720,
+  "n_frames": 1209,
+  "config": {
+    "model": "yolov8s-seg.pt",
+    "tracker": "configs/botsort_a3ps.yaml",
+    "forecaster": "kalman_cv",
+    "base_threshold": 0.75,
+    "horizon_s": 4.0
+  },
+  "stages": {
+    "forecaster": true,
+    "risk_engine": true,
+    "explainer": false
+  }
+}
