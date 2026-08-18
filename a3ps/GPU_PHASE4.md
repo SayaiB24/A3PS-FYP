@@ -173,43 +173,67 @@ MISMATCH, **stop** and send me the output — do not proceed to extraction.
 
 ---
 
-## 3. Measure association quality at 30 Hz vs 10 Hz (do this before step 4)
+## 3. Association quality vs frame rate — DONE, decision recorded
 
-Decimating to 10 Hz is what turns a ~6–12 h windowed pass into ~2–4 h (see the
-table in step 4). The risk is track
-fragmentation: at 10 Hz an actor moves 3× further between frames, and the
-trajectory buffer needs 2 s of *continuous* history before it forecasts at all,
-so a fragmented track yields no features rather than noisier ones.
+This step has been run at all three rates. Results are committed as
+`eval/assoc_rate_check.md` (30 vs 10 Hz) and `eval/assoc_rate_check2.md`
+(30 vs 15 Hz). **No need to re-run** — the numbers and the decision are below.
 
-```powershell
-python scripts/check_assoc_rate.py --index data/nexar/index.csv `
-    --split eval --limit 10 --rates 30,10 `
-    --window-s 13 --tail-s 1 --out eval/assoc_rate_check.md
-```
+| rate | tracks/clip | frac ≥2 s | actors/frame | switches/s | s/clip |
+|---|---|---|---|---|---|
+| 30 Hz | 44.7 | 0.231 | 4.35 | 3.45 | 19–21 |
+| 15 Hz | 31.5 | 0.292 | 4.16 | 2.43 | 10.6 |
+| 10 Hz | 25.2 | 0.349 | 4.00 | 1.95 | 8.4 |
 
-Runtime: ~5.2 k frames of inference total, so **3–5 min** on a GPU.
+**Read `tracks/clip × frac ≥2 s`, not `frac ≥2 s` alone.** The ratio *rises* as
+the rate drops (+27% at 15 Hz, +51% at 10 Hz) purely because subsampling filters
+out one-frame flicker detections that would never have become usable tracks
+anyway — the switch rate falling 3.45 → 1.95/s is the same effect. What actually
+determines training-data volume is the absolute count of forecastable tracks:
 
-Read the `frac >=2s` column — the fraction of tracks that live long enough to be
-forecastable. The script prints its own verdict:
+| rate | forecastable tracks/clip | vs 30 Hz |
+|---|---|---|
+| 30 Hz | ~10.3 | — |
+| 15 Hz | ~9.2 | −11% |
+| 10 Hz | ~8.8 | −15% |
 
-| result | meaning | action |
-|---        |---     |-     --|
-| within ~3% of 30 Hz | 10 Hz is safe | proceed to step 4 with `--rate-hz 10` |
-| 3–10% worse | borderline | re-run with `--rates 30,15` and use 15 Hz |
-| >10% worse | 10 Hz costs more than it saves | use 30 Hz, accept ~6–12 h |
+So decimating costs real yield; it just costs far less than the raw `frac ≥2 s`
+column suggests, and it is not the "borderline" the script's own verdict line
+prints (that message fires on the `actors/frame` dip but is worded as if
+`frac ≥2 s` had dropped — a wording bug in `check_assoc_rate.py`, now fixed).
 
-**Send me `eval/assoc_rate_check.md` before starting step 4.** If you'd rather not
-wait on me, the table's verdict line is the decision — follow it.
+### Decision: 10 Hz for EVERY split
+
+**The rate must be identical across train and eval.** `extract.py` differentiates
+with `_central_diff(values, times)` over real timestamps, so the feature *units*
+are per-second and rate-invariant — but the central-difference span is `2/rate`
+(0.200 s at 10 Hz, 0.133 s at 15 Hz). Over the same detector jitter, the shorter
+span yields systematically noisier velocity/acceleration features. Extracting
+training data at one rate and eval at another would hand the model a noise
+distribution at eval it never saw in training, and the resulting drop would look
+like a model deficiency rather than the extraction artefact it is.
+
+Given one rate everywhere, **10 Hz**:
+
+- Yield is immaterial between the two: ~2,700 training clips gives ~23.8 k
+  forecastable tracks at 10 Hz vs ~24.9 k at 15 Hz. Both are far more than a
+  34 k-parameter GRU needs.
+- 10 Hz is ~1.7 h faster over the full pass (~6.3 h vs ~8.0 h).
+
+So the 4% density advantage of 15 Hz buys nothing, and the consistency
+requirement removes the reason to mix. Step 4's commands all use `--rate-hz 10`.
 
 ---
 
 ## 4. Extract features over the full set
 
-Windowed at 13 s and decimated to the rate chosen in step 3. Positives are
-windowed around `event_time_s` so the window always contains `time_of_alert` plus
-~8 s of run-up; negatives get a deterministic hash-seeded window.
+Windowed at 13 s. Positives are windowed around `event_time_s` so the window
+always contains `time_of_alert` plus ~8 s of run-up; negatives get a
+deterministic hash-seeded window.
 
-Run the three splits separately (adjust `--rate-hz` per step 3):
+All three splits use `--rate-hz 10` — identical by requirement, see step 3. If
+you change it, change it for **all three** or the eval numbers become
+meaningless.
 
 ```powershell
 cd D:\Coding\FYP\A3PS_MAIN\a3ps
@@ -230,20 +254,25 @@ python scripts/extract_features.py --from-video `
     --out data/features/eval --window-s 13 --tail-s 1 --rate-hz 10
 ```
 
-**Expected runtime.** GPU throughput for this pipeline has never been measured
-(`results.md:220` says so explicitly), so these come from the docs' 20–40 ms/frame
-estimate and should be treated as a range, not a promise. Step 3 gives you the
-first real per-clip number — use it to refine these. Scaled to the actual
-2,844-clip pool (not the ~1,500 assumed earlier):
+**Expected runtime.** Step 3 gives the first real measured throughput on this
+GPU: **8.4 s/clip at 10 Hz** over a 13 s window (tracking only — feature
+extraction adds the optical-flow pass on top).
 
-| scope | frames @10 Hz | @20 ms | @40 ms |
+| scope | clips | s/clip | estimated wall time |
 |---|---|---|---|
-| eval (120 clips) | ~15.6 k | ~5 min | ~10 min |
-| full 2,844 clips | ~370 k | ~2.1 h | ~4.1 h |
-| full 2,844 @30 Hz | ~1.11 M | ~6.2 h | ~12.3 h |
+| training (`train_traj` + `train_risk`) | ~2,709 | 8.4 | **~6.3 h** |
+| held-out eval | 120 | 8.4 | **~17 min** |
 
-Add 5–15% for video decode and the optical-flow pass. `--ego-downscale 2` (the
-default) keeps the flow cost small; raise it to 4 if decode dominates.
+That is slower than the 20–40 ms/frame the docs guessed (8.4 s over ~130 frames
+is ~65 ms/frame), so budget closer to **7 h total** than the ~2 h an earlier
+draft of this file estimated. Add 5–15% for the optical-flow pass on top.
+`--ego-downscale 2` (the default) keeps that cost small; raise it to 4 if decode
+dominates.
+
+Because it is ~7 h rather than ~2 h, run it overnight or in two sittings — the
+script is resumable (below), so splitting it across sessions costs nothing.
+**Do the eval split first** (17 min): it is the one that must succeed, and any
+extraction bug shows up there before you spend six hours on training data.
 
 The script is **resumable** — it skips any clip whose `.npz` already exists, so a
 crash or a reboot costs only the clip in flight. Re-run the same command to

@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 """Compare BoT-SORT association quality at two frame rates before committing.
 
-Decimating to 10 Hz cuts the full 1,500-clip feature-extraction pass from ~9-19 h
-to ~1-2 h. The risk is that BoT-SORT's association degrades: at 10 Hz a car moves
+Decimating the frame rate is what makes a full-dataset feature-extraction pass
+affordable (measured on this project: ~2.5x faster at 10 Hz than at 30 Hz over a
+13 s window). The risk is that BoT-SORT's association degrades: at 10 Hz a car moves
 3x further between frames, IoU overlap between consecutive detections shrinks, and
 one physical object can fragment into several track ids. Fragmentation is
 poisonous for this pipeline specifically, because the trajectory buffer needs
@@ -23,17 +24,21 @@ Reported per rate:
 * ``n_tracks``          -- unique track ids seen. Inflated by fragmentation.
 * ``mean_track_s``      -- mean lifetime of a track in seconds.
 * ``frac_tracks_ge_2s`` -- fraction of tracks living long enough to be
-  forecastable. **This is the number to read**: it is the fraction that actually
-  reaches the pipeline's downstream stages.
+  forecastable. Do NOT read this alone: it reliably RISES as the rate drops,
+  because subsampling also removes short flicker detections from the denominator.
+* ``forecastable/clip`` -- ``n_tracks * frac_tracks_ge_2s``. **This is the number
+  to read**: the absolute count of tracks per clip that reach the pipeline's
+  downstream stages.
 * ``mean_actors``       -- mean simultaneously-tracked actors per frame. A big
   drop means detections are being lost, not just re-associated.
 * ``switch_rate``       -- new track ids per second. Directly comparable across
   rates and clip lengths.
 
-Decision rule: 10 Hz is safe if ``frac_tracks_ge_2s`` and ``mean_actors`` hold up
-within a few percent of 30 Hz. If ``frac_tracks_ge_2s`` drops materially, use
-15 Hz or 30 Hz and pay the extra GPU hours -- fragmenting the tracks would cost
-more than the compute saved.
+Decision rule: judge on ``forecastable/clip`` and ``mean_actors``. A drop of a
+few percent buys a large speed-up and is usually worth it on a big training
+split, where clip count dominates; a small held-out eval split should use the
+higher rate, since the run is cheap either way and per-clip density matters more
+there.
 """
 
 import argparse
@@ -178,6 +183,18 @@ def main():
         vals = [s[key] for s in per_rate[r]]
         return sum(vals) / len(vals) if vals else float("nan")
 
+    def forecastable_per_clip(r):
+        """Absolute forecastable tracks per clip = n_tracks * frac_tracks_ge_2s.
+
+        This, NOT ``frac_tracks_ge_2s`` on its own, is the number that decides the
+        rate. The fraction reliably *rises* as the rate drops, because subsampling
+        drops one-frame flicker detections that would never have become usable
+        tracks -- so reading the ratio alone argues for decimating forever. The
+        product is what actually reaches the downstream stages per clip.
+        """
+        vals = [s["n_tracks"] * s["frac_tracks_ge_2s"] for s in per_rate[r]]
+        return sum(vals) / len(vals) if vals else float("nan")
+
     lines = [
         "# BoT-SORT association quality vs frame rate",
         "",
@@ -185,18 +202,21 @@ def main():
         f"- window: {args.window_s}s (+{args.tail_s}s tail after the event)",
         f"- device: `{pipeline.tracker.device}`",
         "",
-        "| rate | tracks/clip | mean track (s) | **frac >=2s** | actors/frame "
-        "| switches/s | inference (s/clip) |",
-        "|---|---|---|---|---|---|---|",
+        "| rate | tracks/clip | mean track (s) | frac >=2s | "
+        "**forecastable/clip** | actors/frame | switches/s | inference (s/clip) |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for r in rates:
         n = max(len(per_rate[r]), 1)
         lines.append(
             f"| {r:g} Hz | {agg('n_tracks', r):.1f} | {agg('mean_track_s', r):.2f} "
-            f"| **{agg('frac_tracks_ge_2s', r):.3f}** | {agg('mean_actors', r):.2f} "
+            f"| {agg('frac_tracks_ge_2s', r):.3f} "
+            f"| **{forecastable_per_clip(r):.1f}** | {agg('mean_actors', r):.2f} "
             f"| {agg('switch_rate', r):.2f} | {timing[r] / n:.1f} |")
 
     base, cmp_ = rates[0], rates[-1]
+    fb, fc = forecastable_per_clip(base), forecastable_per_clip(cmp_)
+    frel = ((fc - fb) / fb * 100.0) if fb else float("nan")
     b, c = agg("frac_tracks_ge_2s", base), agg("frac_tracks_ge_2s", cmp_)
     rel = ((c - b) / b * 100.0) if b else float("nan")
     ab, ac = agg("mean_actors", base), agg("mean_actors", cmp_)
@@ -207,26 +227,42 @@ def main():
         "",
         f"## {cmp_:g} Hz vs {base:g} Hz",
         "",
-        f"- forecastable tracks (>=2 s): **{rel:+.1f}%**",
-        f"- actors per frame: **{arel:+.1f}%**",
+        f"- **forecastable tracks per clip: {frel:+.1f}%**  <- the decision number",
+        f"- frac >=2 s (ratio only, see note): {rel:+.1f}%",
+        f"- actors per frame: {arel:+.1f}%",
         f"- inference speed-up: **{speedup:.2f}x**",
         "",
-        "`frac >=2s` is the number that decides this: the trajectory buffer needs "
+        "The trajectory buffer needs "
         f"{MIN_FORECASTABLE_S:.0f}s of continuous history before it forecasts at "
         "all, so tracks shorter than that contribute no features rather than "
-        "noisier ones.",
+        "noisier ones. Judge the rate on **forecastable tracks per clip** "
+        "(`tracks/clip` x `frac >=2s`): the bare `frac >=2s` ratio goes UP as the "
+        "rate drops, because subsampling also removes the short flicker "
+        "detections from the denominator.",
         "",
     ]
-    if rel < -10.0 or arel < -10.0:
+
+    # Name whichever metric actually tripped, so the verdict text cannot claim a
+    # drop in forecastable tracks when it was really the per-frame actor count.
+    drops = []
+    if frel < -3.0:
+        drops.append(f"forecastable tracks/clip {frel:+.1f}%")
+    if arel < -3.0:
+        drops.append(f"actors/frame {arel:+.1f}%")
+    worst = min(frel, arel)
+
+    if worst < -10.0:
         lines.append(
-            f"**Verdict: do NOT decimate to {cmp_:g} Hz.** Association degrades "
-            "more than 10%, which costs more in lost tracks than the "
-            f"{speedup:.1f}x compute saving is worth. Use an intermediate rate.")
-    elif rel < -3.0 or arel < -3.0:
+            f"**Verdict: do NOT decimate to {cmp_:g} Hz.** {'; '.join(drops)} -- "
+            f"more than 10% worse, which costs more than the {speedup:.1f}x "
+            "compute saving is worth. Use an intermediate rate.")
+    elif drops:
         lines.append(
-            f"**Verdict: borderline.** {cmp_:g} Hz loses a few percent of "
-            "forecastable tracks. Acceptable if the GPU hours matter; try an "
-            "intermediate rate (15 Hz) first.")
+            f"**Verdict: acceptable trade-off at {cmp_:g} Hz.** {'; '.join(drops)}, "
+            f"for a {speedup:.1f}x speed-up. Worth it on large training splits "
+            "where clip count dominates; prefer a higher rate for a small "
+            "held-out eval split, where the run is cheap either way and density "
+            "matters more.")
     else:
         lines.append(
             f"**Verdict: {cmp_:g} Hz is safe.** Association holds within a few "
