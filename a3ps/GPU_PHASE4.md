@@ -40,41 +40,53 @@ Expect `dev 15 clips (5 pos / 10 neg)`, `eval 120 clips (60 pos / 60 neg)`,
 
 ---
 
-## 1. Download the full Kaggle set (~24 GB)
+## 1. Already downloaded — confirm the layout
 
-The dataset is the Nexar Collision Prediction challenge: 1,500 training clips
-(750 positive / 750 negative), ~40 s each at 1280×720.
+You already have the full set as **separate train/test video folders and
+separate train/test label sheets**, rather than one pooled folder + one table.
+`prepare_nexar.py` already supports this shape directly — it takes multiple
+`--videos` dirs and multiple `--annotation` files and merges them — so nothing
+needs to be combined by hand. Note the four paths, called below `<TRAIN_VIDEOS>`,
+`<TEST_VIDEOS>`, `<TRAIN_XLSX>`, `<TEST_XLSX>`.
 
-```powershell
-pip install kaggle
-```
-
-Put your Kaggle API token at `%USERPROFILE%\.kaggle\kaggle.json` (get it from
-<https://www.kaggle.com/settings> → API → "Create New Token"), then:
-
-```powershell
-mkdir D:\nexar_full
-kaggle competitions download -c nexar-collision-prediction -p D:\nexar_full
-Expand-Archive D:\nexar_full\nexar-collision-prediction.zip -DestinationPath D:\nexar_full\extracted
-```
-
-Use a drive with **≥60 GB free** (24 GB zip + 24 GB extracted, plus room for
-features). Expect 30–90 min depending on your connection.
-
-If the competition slug has changed or the CLI refuses, download the archive
-through the browser and extract it to the same `D:\nexar_full\extracted` path —
-nothing below depends on how it got there.
-
-After extracting, find the video folder and the label table:
+Sanity-check the layout and label coverage before indexing anything (cheap,
+catches a wrong path or an unexpectedly-blank column immediately):
 
 ```powershell
-Get-ChildItem D:\nexar_full\extracted -Recurse -Directory | Select-Object -First 20 FullName
-Get-ChildItem D:\nexar_full\extracted -Recurse -Include *.csv,*.xlsx | Select-Object FullName
+Get-ChildItem <TRAIN_VIDEOS> -Filter *.mp4 | Measure-Object | Select-Object Count
+Get-ChildItem <TEST_VIDEOS>  -Filter *.mp4 | Measure-Object | Select-Object Count
+python -c "import openpyxl; wb=openpyxl.load_workbook(r'<TRAIN_XLSX>', read_only=True); ws=wb.active; rows=list(ws.iter_rows(values_only=True)); print('train:', ws.title, len(rows)-1, 'rows, header', rows[0])"
+python -c "import openpyxl; wb=openpyxl.load_workbook(r'<TEST_XLSX>', read_only=True); ws=wb.active; rows=list(ws.iter_rows(values_only=True)); print('test: ', ws.title, len(rows)-1, 'rows, header', rows[0])"
 ```
 
-You are looking for a flat folder of `00001.mp4`-style files and a table with
-`id, time_of_event, time_of_alert, target`. Note both paths — call them
-`<VIDEOS>` and `<LABELS>`.
+Expect roughly 750+750 positive/negative videos across the two folders (or
+however train/test are actually split — Nexar's own split, not ours) and a
+`target` column with both 0s and 1s in the test sheet too, since you confirmed
+it is labeled and not a blank Kaggle submission holdout.
+
+Also check the two label tables don't silently disagree on an id that appears in
+both (`prepare_nexar.py` gives the FIRST table passed precedence on a collision,
+so this only matters if train/test aren't cleanly disjoint):
+
+```powershell
+@'
+import sys
+sys.path.insert(0, "scripts")
+from prepare_nexar import load_table, canon
+tr = {canon(r["id"]): r for r in load_table(r"<TRAIN_XLSX>") if r["id"] is not None}
+te = {canon(r["id"]): r for r in load_table(r"<TEST_XLSX>") if r["id"] is not None}
+overlap = set(tr) & set(te)
+print(f"train {len(tr)} ids, test {len(te)} ids, overlap {len(overlap)}")
+if overlap:
+    mism = [i for i in overlap if tr[i]["target"] != te[i]["target"]]
+    print(f"  of which {len(mism)} disagree on target -- e.g. {mism[:5]}")
+'@ | python -
+```
+
+If `overlap` is 0, the two are disjoint splits as expected and nothing else to
+worry about. If it's nonzero and `mism` is nonzero, stop and send me the output —
+that means the same clip id carries two different labels depending on which
+table you read, which is a data problem, not something to route around here.
 
 ---
 
@@ -88,45 +100,38 @@ invalidating the 3.7 GB cache and every number measured so far.
 The `--freeze` flag (default `eval/split_freeze.json`, committed) prevents that:
 pinned clips keep their split verbatim and new clips can only join `train_traj`.
 
-Copy the existing 155 videos into the new pool first, so the pinned clips are
-present:
+`--videos` and `--annotation` both accept multiple paths and merge them, so the
+train/test folders and sheets don't need to be combined by hand first — pass
+train before test so train wins on the (expected-to-be-zero, per step 1's check)
+id collision case.
+
+Copy the existing 155 videos into one of the pools first, so the pinned clips are
+present under a folder `prepare_nexar.py` will scan (either works; `<TRAIN_VIDEOS>`
+is shown here since that pool is usually larger):
 
 ```powershell
-Copy-Item C:\path\to\A3ps-actual-P\a3ps\data\nexar\videos\*.mp4 D:\nexar_full\extracted\<VIDEOS> -Force
+Copy-Item C:\path\to\A3ps-actual-P\a3ps\data\nexar\videos\*.mp4 <TRAIN_VIDEOS> -Force
 ```
 
-Then re-index:
+Then re-index over BOTH splits' videos and BOTH label sheets in one pass:
 
 ```powershell
 python scripts/prepare_nexar.py --root data/nexar `
-    --videos D:\nexar_full\extracted\<VIDEOS> `
-    --annotation D:\nexar_full\extracted\<LABELS> `
+    --videos <TRAIN_VIDEOS> <TEST_VIDEOS> `
+    --annotation <TRAIN_XLSX> <TEST_XLSX> `
     --freeze eval/split_freeze.json
 ```
 
 Expect `splits (frozen from eval/split_freeze.json): ...` and
 `135 clip ids replayed from the freeze`. Runtime: a few minutes (it probes every
-video's metadata).
+video's metadata across both folders).
 
-**It will also print a warning like `! 685 positive(s) are not in the freeze and
+**It will also print a warning like `! 1,435 positive(s) are not in the freeze and
 were left UNUSED`.** That is deliberate — positives are the scarce resource and
 the script will not silently assign them. Give them a training split explicitly:
 
 ```powershell
-python - <<'PY'
-import csv
-rows = list(csv.DictReader(open("data/nexar/index.csv", encoding="utf-8-sig")))
-pinned = {"dev", "eval"}
-n = 0
-for r in rows:
-    if not (r["split"] or "") and int(float(r["label"])) == 1:
-        r["split"] = "train_risk"
-        n += 1
-with open("data/nexar/index.csv", "w", newline="", encoding="utf-8") as fh:
-    w = csv.DictWriter(fh, fieldnames=rows[0].keys())
-    w.writeheader(); w.writerows(rows)
-print(f"assigned {n} unused positives to train_risk")
-PY
+python scripts/assign_unused_positives.py --index data/nexar/index.csv --split train_risk
 ```
 
 Verify the held-out set survived, then commit the index so the CPU laptop has it:
