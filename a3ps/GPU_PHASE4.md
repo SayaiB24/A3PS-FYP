@@ -5,18 +5,36 @@ the CPU laptop; the CPU-side work (split freeze, metric re-key, feature
 extractor, ego helper, anticipation loss, temporal head, smoke train) is already
 done and committed.
 
-Run the steps in order. Steps 0–2 are the download and a cheap measurement; do
-**not** start step 4 (the 1,500-clip pass) until step 3 has told us which frame
+Run the steps in order. Steps 0–2 are indexing and a cheap measurement; do
+**not** start step 4 (the ~2,844-clip pass) until step 3 has told us which frame
 rate to use.
+
+**Confirmed paths for this machine** (from the actual layout you have):
+
+| what | path |
+|---|---|
+| repo | `D:\Coding\FYP\A3PS_MAIN\a3ps` |
+| data root | `D:\Coding\FYP\Nexar-Dataset` |
+| train videos | `D:\Coding\FYP\Nexar-Dataset\train` (1500 clips) |
+| test videos | `D:\Coding\FYP\Nexar-Dataset\test` (1344 clips) |
+| train labels | `D:\Coding\FYP\Nexar-Dataset\train.csv` |
+| test labels | `D:\Coding\FYP\Nexar-Dataset\test.csv` |
+
+Pool size is **2,844 clips**, not the ~1,500 assumed in earlier drafts of this
+doc — the runtime table in step 4 is scaled accordingly.
+
+This dataset has already been verified against known-trusted local labels: 355
+overlapping clip ids checked against `eval/nexar_index_gpu.csv`, **0
+mismatches**. It is safe to build on; step 1's overlap check below is kept for
+the record and does not need to be re-run.
 
 ---
 
 ## 0. Sync code and check CUDA
 
 ```powershell
-cd C:\path\to\A3ps-actual-P
+cd D:\Coding\FYP\A3PS_MAIN\a3ps
 git pull
-cd a3ps
 ```
 
 Environment setup (venv, CUDA torch, requirements) is unchanged — follow
@@ -40,53 +58,57 @@ Expect `dev 15 clips (5 pos / 10 neg)`, `eval 120 clips (60 pos / 60 neg)`,
 
 ---
 
-## 1. Already downloaded — confirm the layout
+## 1. Layout (already confirmed — nothing to run here)
 
-You already have the full set as **separate train/test video folders and
-separate train/test label sheets**, rather than one pooled folder + one table.
-`prepare_nexar.py` already supports this shape directly — it takes multiple
-`--videos` dirs and multiple `--annotation` files and merges them — so nothing
-needs to be combined by hand. Note the four paths, called below `<TRAIN_VIDEOS>`,
-`<TEST_VIDEOS>`, `<TRAIN_XLSX>`, `<TEST_XLSX>`.
+`D:\Coding\FYP\Nexar-Dataset` holds separate train/test video folders and
+separate train/test label sheets (`train.csv` / `test.csv`), rather than one
+pooled folder + one table. `prepare_nexar.py` already supports this shape
+directly — it takes multiple `--videos` dirs and multiple `--annotation` files
+and merges them, so nothing needs to be combined by hand.
 
-Sanity-check the layout and label coverage before indexing anything (cheap,
-catches a wrong path or an unexpectedly-blank column immediately):
+Already checked and confirmed:
 
-```powershell
-Get-ChildItem <TRAIN_VIDEOS> -Filter *.mp4 | Measure-Object | Select-Object Count
-Get-ChildItem <TEST_VIDEOS>  -Filter *.mp4 | Measure-Object | Select-Object Count
-python -c "import openpyxl; wb=openpyxl.load_workbook(r'<TRAIN_XLSX>', read_only=True); ws=wb.active; rows=list(ws.iter_rows(values_only=True)); print('train:', ws.title, len(rows)-1, 'rows, header', rows[0])"
-python -c "import openpyxl; wb=openpyxl.load_workbook(r'<TEST_XLSX>', read_only=True); ws=wb.active; rows=list(ws.iter_rows(values_only=True)); print('test: ', ws.title, len(rows)-1, 'rows, header', rows[0])"
-```
+- 1500 videos in `train\`, 1344 in `test\` (2,844 total).
+- Both `train.csv` and `test.csv` carry real `target` values (not a blank
+  Kaggle submission holdout).
+- Label agreement: 355 overlapping clip ids matched `eval/nexar_index_gpu.csv`
+  with 0 mismatches (see previous message).
 
-Expect roughly 750+750 positive/negative videos across the two folders (or
-however train/test are actually split — Nexar's own split, not ours) and a
-`target` column with both 0s and 1s in the test sheet too, since you confirmed
-it is labeled and not a blank Kaggle submission holdout.
-
-Also check the two label tables don't silently disagree on an id that appears in
-both (`prepare_nexar.py` gives the FIRST table passed precedence on a collision,
-so this only matters if train/test aren't cleanly disjoint):
+For reference, this is the overlap check that was run (no need to re-run it —
+kept here in case the dataset is ever replaced or re-downloaded):
 
 ```powershell
-@'
-import sys
-sys.path.insert(0, "scripts")
+python -c "
+import sys, csv
+sys.path.insert(0, 'scripts')
 from prepare_nexar import load_table, canon
-tr = {canon(r["id"]): r for r in load_table(r"<TRAIN_XLSX>") if r["id"] is not None}
-te = {canon(r["id"]): r for r in load_table(r"<TEST_XLSX>") if r["id"] is not None}
-overlap = set(tr) & set(te)
-print(f"train {len(tr)} ids, test {len(te)} ids, overlap {len(overlap)}")
-if overlap:
-    mism = [i for i in overlap if tr[i]["target"] != te[i]["target"]]
-    print(f"  of which {len(mism)} disagree on target -- e.g. {mism[:5]}")
-'@ | python -
+known = {}
+with open('eval/nexar_index_gpu.csv', encoding='utf-8-sig') as fh:
+    for r in csv.DictReader(fh):
+        known[canon(r['clip_id'])] = r
+checked, mismatches = 0, []
+for path in (sys.argv[1], sys.argv[2]):
+    for row in load_table(path):
+        cid = canon(row['id']) if row['id'] is not None else None
+        if cid is None or cid not in known:
+            continue
+        checked += 1
+        k = known[cid]
+        exp_label = int(float(k['label']))
+        if row['target'] != exp_label:
+            mismatches.append((cid, 'label', exp_label, row['target']))
+            continue
+        if exp_label == 1:
+            for field, mirror_val in (('event_time_s', row['event_time_s']), ('alert_time_s', row['alert_time_s'])):
+                exp = k[field]
+                if exp and mirror_val != '' and abs(float(exp) - float(mirror_val)) > 0.05:
+                    mismatches.append((cid, field, exp, mirror_val))
+print(f'checked {checked} overlapping clip ids against known-trusted local data')
+print(f'mismatches: {len(mismatches)}')
+for m in mismatches[:20]:
+    print(' ', m)
+" "D:\Coding\FYP\Nexar-Dataset\train.csv" "D:\Coding\FYP\Nexar-Dataset\test.csv"
 ```
-
-If `overlap` is 0, the two are disjoint splits as expected and nothing else to
-worry about. If it's nonzero and `mism` is nonzero, stop and send me the output —
-that means the same clip id carries two different labels depending on which
-table you read, which is a data problem, not something to route around here.
 
 ---
 
@@ -94,41 +116,43 @@ table you read, which is a data problem, not something to route around here.
 
 This is the step that would silently destroy comparability if done wrong.
 `prepare_nexar.py` assigns splits with a pool-size-dependent shuffle, so simply
-re-running it over 1,500 clips would hand us a different 120-clip held-out set —
+re-running it over 2,844 clips would hand us a different 120-clip held-out set —
 invalidating the 3.7 GB cache and every number measured so far.
 
 The `--freeze` flag (default `eval/split_freeze.json`, committed) prevents that:
 pinned clips keep their split verbatim and new clips can only join `train_traj`.
 
-`--videos` and `--annotation` both accept multiple paths and merge them, so the
-train/test folders and sheets don't need to be combined by hand first — pass
-train before test so train wins on the (expected-to-be-zero, per step 1's check)
-id collision case.
+`--videos` and `--annotation` both accept multiple paths and merge them, so
+train/test don't need to be combined by hand first — train is passed before test
+so it wins on any id collision (none expected — train and test are Nexar's own
+disjoint split).
 
-Copy the existing 155 videos into one of the pools first, so the pinned clips are
-present under a folder `prepare_nexar.py` will scan (either works; `<TRAIN_VIDEOS>`
-is shown here since that pool is usually larger):
+Copy the existing 155 already-cached videos into the pool first, so every clip
+the freeze names is actually present as a file:
 
 ```powershell
-Copy-Item C:\path\to\A3ps-actual-P\a3ps\data\nexar\videos\*.mp4 <TRAIN_VIDEOS> -Force
+Copy-Item D:\Coding\FYP\A3PS_MAIN\a3ps\data\nexar\videos\*.mp4 "D:\Coding\FYP\Nexar-Dataset\train" -Force
 ```
 
-Then re-index over BOTH splits' videos and BOTH label sheets in one pass:
+Then re-index over BOTH folders and BOTH label sheets in one pass:
 
 ```powershell
 python scripts/prepare_nexar.py --root data/nexar `
-    --videos <TRAIN_VIDEOS> <TEST_VIDEOS> `
-    --annotation <TRAIN_XLSX> <TEST_XLSX> `
+    --videos "D:\Coding\FYP\Nexar-Dataset\train" "D:\Coding\FYP\Nexar-Dataset\test" `
+    --annotation "D:\Coding\FYP\Nexar-Dataset\train.csv" "D:\Coding\FYP\Nexar-Dataset\test.csv" `
     --freeze eval/split_freeze.json
 ```
 
 Expect `splits (frozen from eval/split_freeze.json): ...` and
 `135 clip ids replayed from the freeze`. Runtime: a few minutes (it probes every
-video's metadata across both folders).
+video's metadata across both folders — 2,844 clips this time, so a bit longer
+than a 155-clip pass).
 
-**It will also print a warning like `! 1,435 positive(s) are not in the freeze and
-were left UNUSED`.** That is deliberate — positives are the scarce resource and
-the script will not silently assign them. Give them a training split explicitly:
+**It will also print a warning like `! N positive(s) are not in the freeze and
+were left UNUSED`** (N depends on the real class balance of this 2,844-clip
+pool, which hasn't been counted yet — the printed number is the first time we'll
+know it). That is deliberate — positives are the scarce resource and the script
+will not silently assign them. Give them a training split explicitly:
 
 ```powershell
 python scripts/assign_unused_positives.py --index data/nexar/index.csv --split train_risk
@@ -140,7 +164,7 @@ Verify the held-out set survived, then commit the index so the CPU laptop has it
 python scripts/freeze_split.py verify --index data/nexar/index.csv
 Copy-Item data\nexar\index.csv eval\nexar_index_full.csv
 git add eval/nexar_index_full.csv
-git commit -m "eval: full 1500-clip index with frozen dev/eval split"
+git commit -m "eval: full 2844-clip index with frozen dev/eval split"
 git push
 ```
 
@@ -151,7 +175,8 @@ MISMATCH, **stop** and send me the output — do not proceed to extraction.
 
 ## 3. Measure association quality at 30 Hz vs 10 Hz (do this before step 4)
 
-Decimating to 10 Hz is what turns a 9–19 h pass into 1–2 h. The risk is track
+Decimating to 10 Hz is what turns a ~6–12 h windowed pass into ~2–4 h (see the
+table in step 4). The risk is track
 fragmentation: at 10 Hz an actor moves 3× further between frames, and the
 trajectory buffer needs 2 s of *continuous* history before it forecasts at all,
 so a fragmented track yields no features rather than noisier ones.
@@ -171,7 +196,7 @@ forecastable. The script prints its own verdict:
 |---|---|---|
 | within ~3% of 30 Hz | 10 Hz is safe | proceed to step 4 with `--rate-hz 10` |
 | 3–10% worse | borderline | re-run with `--rates 30,15` and use 15 Hz |
-| >10% worse | 10 Hz costs more than it saves | use 30 Hz, accept 9–19 h |
+| >10% worse | 10 Hz costs more than it saves | use 30 Hz, accept ~6–12 h |
 
 **Send me `eval/assoc_rate_check.md` before starting step 4.** If you'd rather not
 wait on me, the table's verdict line is the decision — follow it.
@@ -187,7 +212,9 @@ windowed around `event_time_s` so the window always contains `time_of_alert` plu
 Run the three splits separately (adjust `--rate-hz` per step 3):
 
 ```powershell
-# training negatives (~750 + the existing 220)
+cd D:\Coding\FYP\A3PS_MAIN\a3ps
+
+# training negatives
 python scripts/extract_features.py --from-video `
     --index data/nexar/index.csv --split train_traj `
     --out data/features/train_neg --window-s 13 --tail-s 1 --rate-hz 10
@@ -206,13 +233,14 @@ python scripts/extract_features.py --from-video `
 **Expected runtime.** GPU throughput for this pipeline has never been measured
 (`results.md:220` says so explicitly), so these come from the docs' 20–40 ms/frame
 estimate and should be treated as a range, not a promise. Step 3 gives you the
-first real per-clip number — use it to refine these.
+first real per-clip number — use it to refine these. Scaled to the actual
+2,844-clip pool (not the ~1,500 assumed earlier):
 
 | scope | frames @10 Hz | @20 ms | @40 ms |
 |---|---|---|---|
 | eval (120 clips) | ~15.6 k | ~5 min | ~10 min |
-| full 1,500 clips | ~195 k | ~1.1 h | ~2.2 h |
-| full 1,500 @30 Hz | ~585 k | ~3.3 h | ~6.5 h |
+| full 2,844 clips | ~370 k | ~2.1 h | ~4.1 h |
+| full 2,844 @30 Hz | ~1.11 M | ~6.2 h | ~12.3 h |
 
 Add 5–15% for video decode and the optical-flow pass. `--ego-downscale 2` (the
 default) keeps the flow cost small; raise it to 4 if decode dominates.
