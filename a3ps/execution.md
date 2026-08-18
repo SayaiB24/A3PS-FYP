@@ -1,4 +1,4 @@
-# A3PS — Execution Guide (from scratch)
+f# A3PS — Execution Guide (from scratch)
 
 This is the "I just got this repo, how do I run everything" guide. Follow it
 top to bottom on a fresh machine and you end up with the full pipeline
