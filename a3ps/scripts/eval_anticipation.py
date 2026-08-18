@@ -67,6 +67,21 @@ DEFAULT_ALERT_TYPES = ("ALERT", "VIRTUAL_BRAKE")
 REACTIVE_BEV_THRESH_M = 2.0
 REACTIVE_IMG_FRAC = 0.08
 
+# "Useful warning" window, in seconds before the annotated collision.
+#
+# Why this exists: mTTA rewards warning EARLY without bound, so a method that
+# alarms in the first frame of every clip scores a huge mTTA and an unbeatable
+# anticipation gain while telling the driver nothing. The reactive-proximity
+# baseline does exactly that -- on the Nexar eval clips it fires within 2 s of
+# clip start on ~76% of positives, roughly 18 s before impact. A warning is only
+# actionable in a band: late enough to be about THIS hazard, early enough to
+# brake. Outside that band it is either noise or a surprise.
+#
+# Lower bound: below ~0.5 s there is no time to react at all.
+# Upper bound: beyond ~6 s the warning cannot be attributed to the event.
+USEFUL_WINDOW_LO_S = 0.5
+USEFUL_WINDOW_HI_S = 6.0
+
 
 # ---------------------------------------------------------------------------
 # manifest
@@ -371,13 +386,16 @@ def render_pr_curve(path_png, sweep):
     plt.close(fig)
 
 
-def compute_metrics(rows):
+def compute_metrics(rows, useful_lo=USEFUL_WINDOW_LO_S, useful_hi=USEFUL_WINDOW_HI_S):
     """Aggregate per-clip rows into anticipation metrics.
 
     Each row: {clip_id, label, event_time_s, first_alert_t, peak_prob,
     processed}. Only processed rows contribute. Returns (summary, detail_rows).
     Works for either method -- pass rows whose ``first_alert_t`` is the A3PS
     alert time or the reactive-baseline alert time.
+
+    ``useful_lo``/``useful_hi`` bound the actionable warning window used for
+    ``useful_warning_rate`` (see USEFUL_WINDOW_LO_S).
     """
     used = [r for r in rows if r["processed"]]
     pos = [r for r in used if r["label"] == 1]
@@ -385,15 +403,25 @@ def compute_metrics(rows):
 
     ttas = []
     detected = 0
+    useful = 0
+    n_timed = 0            # positives with a known event time (useful-rate denominator)
     for r in pos:
         te = r["event_time_s"]
         fa = r["first_alert_t"]
         anticipated = fa is not None and (te is None or fa <= te)
         r["anticipated"] = anticipated
+        if te is not None:
+            n_timed += 1
+        r["useful"] = False
         if anticipated:
             detected += 1
             if te is not None:
-                ttas.append(te - fa)
+                tta = te - fa
+                ttas.append(tta)
+                # Actionable only inside the window -- see USEFUL_WINDOW_*.
+                if useful_lo <= tta <= useful_hi:
+                    r["useful"] = True
+                    useful += 1
 
     false_alarms = 0
     for r in neg:
@@ -413,6 +441,13 @@ def compute_metrics(rows):
         "mTTA_s": (sum(ttas) / len(ttas)) if ttas else float("nan"),
         "n_tta": len(ttas),
         "false_alarm_rate": (false_alarms / len(neg)) if neg else float("nan"),
+        # Fraction of ALL timed positives (not just anticipated ones) warned
+        # inside the actionable window: a miss and an unusably-early warning
+        # both count against it, which is the point.
+        "useful_warning_rate": (useful / n_timed) if n_timed else float("nan"),
+        "n_useful": useful,
+        "n_timed": n_timed,
+        "useful_window": (useful_lo, useful_hi),
         "AP": average_precision(scores, labels),
     }
     return summary, used
@@ -491,19 +526,34 @@ def build_report(a3ps, reactive, split, thresholds, matched=None):
         f"- reactive baseline: BEV < {REACTIVE_BEV_THRESH_M} m "
         f"(else img < {int(REACTIVE_IMG_FRAC * 100)}% of frame height) to the ego corridor",
         "",
-        "| method | detection rate | false-alarm rate | mTTA (s) |",
-        "|---|---|---|---|",
+        f"| method | detection rate | false-alarm rate | mTTA (s) | "
+        f"useful warning rate ({_fmt(a3ps['useful_window'][0], 1)}-"
+        f"{_fmt(a3ps['useful_window'][1], 1)} s) |",
+        "|---|---|---|---|---|",
         f"| **A3PS (proactive)** | {_fmt(a3ps['detection_recall'])} "
         f"| {_fmt(a3ps['false_alarm_rate'])} "
-        f"| {_fmt(a3ps['mTTA_s'], 2)} (n={a3ps['n_tta']}) |",
+        f"| {_fmt(a3ps['mTTA_s'], 2)} (n={a3ps['n_tta']}) "
+        f"| {_fmt(a3ps['useful_warning_rate'])} "
+        f"({a3ps['n_useful']}/{a3ps['n_timed']}) |",
         f"| Reactive-proximity (baseline) | {_fmt(reactive['detection_recall'])} "
         f"| {_fmt(reactive['false_alarm_rate'])} "
-        f"| {_fmt(reactive['mTTA_s'], 2)} (n={reactive['n_tta']}) |",
+        f"| {_fmt(reactive['mTTA_s'], 2)} (n={reactive['n_tta']}) "
+        f"| {_fmt(reactive['useful_warning_rate'])} "
+        f"({reactive['n_useful']}/{reactive['n_timed']}) |",
         "",
         "_The mTTA row above is averaged over each method's own true-positive "
         "set (different n, different clips) -- do NOT read the difference "
         "between these two mTTA values as an anticipation-gain claim. See the "
         "matched-subset comparison below for that._",
+        "",
+        "_**Read the useful-warning-rate column, not mTTA, to judge whether "
+        "warnings are actionable.** mTTA rewards warning early without bound, "
+        "so a method that alarms on the first frame of every clip maximises it "
+        "while telling the driver nothing -- which is exactly what the reactive "
+        "baseline does here. The useful warning rate instead counts positives "
+        "warned inside a window that is late enough to concern this hazard and "
+        "early enough to brake; both misses and unusably-early alarms count "
+        "against it._",
         "",
     ]
 
@@ -590,6 +640,11 @@ def main():
                    help="Run the pipeline (no rendering) for clips missing events.json.")
     p.add_argument("--alert-types", default=",".join(DEFAULT_ALERT_TYPES),
                    help="Comma-separated event types that count as an alert.")
+    p.add_argument("--useful-lo", type=float, default=USEFUL_WINDOW_LO_S,
+                   help="Lower bound (s before impact) of the actionable "
+                        "warning window used for useful_warning_rate.")
+    p.add_argument("--useful-hi", type=float, default=USEFUL_WINDOW_HI_S,
+                   help="Upper bound (s before impact) of that window.")
     p.add_argument("--out", default="eval/anticipation.md")
     p.add_argument("--per-clip-csv", default="eval/anticipation_per_clip.csv")
     p.add_argument("--sweep", action="store_true",
@@ -656,8 +711,10 @@ def main():
                  "peak_prob": r["peak_prob"], "processed": r["processed"]}
                 for r in rows]
 
-    a3ps_summary, _ = compute_metrics(_method_rows("a3ps_first_alert_t"))
-    reactive_summary, _ = compute_metrics(_method_rows("reactive_first_alert_t"))
+    a3ps_summary, _ = compute_metrics(_method_rows("a3ps_first_alert_t"),
+                                      args.useful_lo, args.useful_hi)
+    reactive_summary, _ = compute_metrics(_method_rows("reactive_first_alert_t"),
+                                          args.useful_lo, args.useful_hi)
 
     if a3ps_summary["n_processed"] == 0:
         print(f"No processed clips found under {args.clips_dir}. "
@@ -683,13 +740,15 @@ def main():
     write_per_clip_csv(args.per_clip_csv, rows)
 
     print()
-    print(f"{'':22s} {'detect':>8s} {'false-alarm':>12s} {'mTTA(s)':>9s}")
+    print(f"{'':22s} {'detect':>8s} {'false-alarm':>12s} {'mTTA(s)':>9s} {'useful':>8s}")
     print(f"{'A3PS (proactive)':22s} {_fmt(a3ps_summary['detection_recall']):>8s} "
           f"{_fmt(a3ps_summary['false_alarm_rate']):>12s} "
-          f"{_fmt(a3ps_summary['mTTA_s'], 2):>9s}")
+          f"{_fmt(a3ps_summary['mTTA_s'], 2):>9s} "
+          f"{_fmt(a3ps_summary['useful_warning_rate']):>8s}")
     print(f"{'reactive baseline':22s} {_fmt(reactive_summary['detection_recall']):>8s} "
           f"{_fmt(reactive_summary['false_alarm_rate']):>12s} "
-          f"{_fmt(reactive_summary['mTTA_s'], 2):>9s}")
+          f"{_fmt(reactive_summary['mTTA_s'], 2):>9s} "
+          f"{_fmt(reactive_summary['useful_warning_rate']):>8s}")
     if matched is not None:
         print(f"\nmatched-subset (n={matched['n_matched']}): "
               f"A3PS {_fmt(matched['a3ps_mtta_s'], 2)}s vs reactive "

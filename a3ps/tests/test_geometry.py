@@ -80,3 +80,57 @@ def test_calibration_corners_map_to_ground_points():
     bev = gp.img_to_bev(gp.image_points)
     for (bx, by), (gx, gy) in zip(bev, gp.ground_points):
         assert abs(bx - gx) < 1e-3 and abs(by - gy) < 1e-3
+
+
+# ---------------------------------------------------------------------------
+# corridor lateral span (extrapolating gate for scale-based TTC)
+# ---------------------------------------------------------------------------
+
+def _corridor():
+    """Ego corridor quad as the pipeline emits it, for a 1280x720 frame."""
+    return [[499.2, 720.0], [780.8, 720.0], [665.6, 432.0], [614.4, 432.0]]
+
+
+def test_lateral_span_matches_quad_inside_its_own_rows():
+    from a3ps.common.geometry import corridor_lateral_span
+    lo, hi = corridor_lateral_span(_corridor(), 720.0)
+    assert abs(lo - 499.2) < 1e-6 and abs(hi - 780.8) < 1e-6
+    lo, hi = corridor_lateral_span(_corridor(), 432.0)
+    assert abs(lo - 614.4) < 1e-6 and abs(hi - 665.6) < 1e-6
+
+
+def test_lateral_span_narrows_with_distance():
+    from a3ps.common.geometry import corridor_lateral_span
+    near = corridor_lateral_span(_corridor(), 700.0)
+    far = corridor_lateral_span(_corridor(), 500.0)
+    assert (far[1] - far[0]) < (near[1] - near[0])
+
+
+def test_lateral_span_extrapolates_above_the_quad():
+    """The whole point: rows above top_y must still yield a usable span.
+
+    A plain polygon test reports "outside" for every distant actor, which is
+    what made the looming gate reject the actors it most needed to see.
+    """
+    from a3ps.common.geometry import corridor_lateral_span
+    lo, hi = corridor_lateral_span(_corridor(), 380.0)   # above the quad's top
+    assert hi > lo
+    assert hi - lo < 51.2                                 # narrower than at top_y
+
+
+def test_bbox_overlaps_corridor_gate():
+    from a3ps.common.geometry import bbox_overlaps_corridor
+    c = _corridor()
+    assert bbox_overlaps_corridor([600, 600, 700, 700], c)          # straddles lane
+    assert not bbox_overlaps_corridor([0, 600, 100, 700], c)        # far left
+    # a box just outside is admitted once padding widens the span
+    box = [800, 650, 860, 700]
+    assert not bbox_overlaps_corridor(box, c)
+    assert bbox_overlaps_corridor(box, c, pad_frac=0.5)
+
+
+def test_bbox_overlaps_corridor_far_actor_not_auto_rejected():
+    from a3ps.common.geometry import bbox_overlaps_corridor
+    c = _corridor()
+    # small, distant, lane-centred box sitting ABOVE the corridor quad
+    assert bbox_overlaps_corridor([632, 360, 648, 380], c)

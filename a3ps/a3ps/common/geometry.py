@@ -89,6 +89,60 @@ def ego_corridor(
     return [[-half, y0], [half, y0], [half, y1], [-half, y1]]
 
 
+def corridor_lateral_span(corridor: List[Point], y: float) -> Tuple[float, float]:
+    """Horizontal span of the ego corridor at image row ``y``, EXTRAPOLATED.
+
+    ``corridor`` is the image-space quad in the order ``ego_corridor``/the
+    pipeline emit it: bottom-left, bottom-right, top-right, top-left.
+
+    This is deliberately NOT a polygon containment test. The corridor quad only
+    covers the lower part of the frame (down from ``top_y_frac``, ~25 m ahead),
+    so a point-in-polygon test answers "is this actor inside the modelled
+    corridor", and every more-distant actor -- exactly the one an anticipation
+    system wants to reason about early -- falls outside it and reads as "not in
+    path". The lane does not end at that row in the world; it keeps converging
+    toward the vanishing point.
+
+    So for *lateral alignment* ("is this actor left/right of my lane, at any
+    distance") the two side edges are extended as lines and evaluated at any
+    row, above the quad's top edge included. Use this for gating a separately
+    computed longitudinal signal (e.g. scale-based time-to-contact).
+
+    For "is this predicted point inside the corridor", keep using
+    :func:`a3ps.risk.collision.point_in_dilated_polygon` -- that containment
+    semantic is what the collision-probability integral wants, and this
+    function is not a substitute for it.
+    """
+    (blx, bly), (brx, bry), (trx, try_), (tlx, tly) = corridor
+
+    def _x_on_edge(x0, y0, x1, y1):
+        if abs(y1 - y0) < 1e-9:          # horizontal edge -> no meaningful x(y)
+            return x0
+        return x0 + (x1 - x0) * (y - y0) / (y1 - y0)
+
+    xl = _x_on_edge(blx, bly, tlx, tly)
+    xr = _x_on_edge(brx, bry, trx, try_)
+    lo, hi = min(xl, xr), max(xl, xr)
+    if hi - lo < 1.0:                    # at/beyond the vanishing point
+        mid = 0.5 * (lo + hi)
+        lo, hi = mid - 0.5, mid + 0.5
+    return lo, hi
+
+
+def bbox_overlaps_corridor(bbox: BBox, corridor: List[Point], pad_frac: float = 0.0) -> bool:
+    """True if ``bbox`` overlaps the corridor horizontally at its base row.
+
+    The base row (``y2``) is used because that is where the actor meets the
+    ground plane. ``pad_frac`` widens the span by that fraction of its own
+    width on each side, allowing for actors that are drifting toward the lane
+    rather than already in it.
+    """
+    x1, _y1, x2, y2 = bbox
+    lo, hi = corridor_lateral_span(corridor, y2)
+    pad = (hi - lo) * pad_frac
+    return not (x2 < lo - pad or x1 > hi + pad)
+
+
 # Default ground-plane calibration (image fractions -> ground metres).
 # Image trapezoid: bottom-left, bottom-right, top-right, top-left.
 # Ground: lane 3.6 m wide (x in [-1.8, 1.8]) at 0 m and 25 m ahead.

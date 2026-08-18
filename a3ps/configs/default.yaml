@@ -14,7 +14,12 @@ process_fps: 30
 predict_hz: 5
 horizon_s: 4.0
 history_s: 2.0
-base_threshold: 0.75
+# 0.65, not 0.75: the Kalman noise constants were recalibrated against measured
+# prediction error (see a3ps/forecasting/kalman_cv.py), which reports honest --
+# and therefore larger -- uncertainty and so lowers collision probabilities
+# across the board. At 0.75 dev-split detection fell to 0.600; 0.65 restores it
+# to 1.000 at an unchanged 0.200 false-alarm rate.
+base_threshold: 0.65
 caution_threshold: 0.4
 # Decision state machine (see a3ps/risk/decision.py).
 alert_margin: 0.15        # ALERT fires at (active_threshold - this)

@@ -6,9 +6,17 @@ position and velocity, then rolled forward over the horizon WITHOUT further
 updates so the covariance — and therefore the reported std — grows with each
 step.
 
-Process noise ``Q`` is tuned so positional std roughly doubles over 4 s for a
-smooth track. Histories shorter than 4 points fall back to a straight-line
-extrapolation from the last two points with a large fixed std.
+Process noise ``Q`` and measurement noise ``R`` are calibrated against the
+*measured* prediction error on real tracked dashcam actors, so the reported std
+is an honest uncertainty rather than a nominal one: RMSE(k) / std(k) is ~1
+across the horizon (see the constants below). This matters because
+:mod:`a3ps.risk.collision` samples sigma points at +/- std -- if std is far
+smaller than the true error, every sigma point lands on the mean and the
+collision probability degenerates into a hard 0/1 indicator instead of a
+graded risk.
+
+Histories shorter than 4 points fall back to a straight-line extrapolation
+from the last two points with a large fixed std.
 """
 
 from __future__ import annotations
@@ -19,12 +27,16 @@ from a3ps.forecasting.base import Forecaster, Means, Point, Stds
 
 # Fallback std (pixels) when there is too little history to run the filter.
 FALLBACK_STD = 40.0
-# Measurement noise (px^2): foot-point observation uncertainty.
-MEAS_VAR = 1.0
-# Process-noise spectral density. With the measurement-std reporting below,
-# these give positional std that roughly doubles over 4 s (~2.1x) for a smooth
-# track at 5 Hz (std ~1.2 px now -> ~2.5 px at the 4 s horizon).
-PROCESS_VAR = 0.1
+# Measurement noise (px^2): foot-point observation uncertainty. Segmentation
+# centroids jitter by ~5 px between frames, hence a variance of ~25.
+MEAS_VAR = 25.0
+# Process-noise spectral density. Calibrated on 387 (history, future) windows
+# rebuilt from the tracked dev clips: these values put RMSE(k) / std(k) at
+# 0.73x / 1.05x / 1.15x for horizons of 0.2 s / 1 s / 4 s, i.e. the reported
+# std now matches the error the filter actually makes (std ~2.5 px now -> ~97 px
+# at the 4 s horizon). The previous values (1.0 / 0.1) reported ~1.2 px -> 3 px,
+# under-dispersed by 44x at 4 s, which collapsed collision probability to 0/1.
+PROCESS_VAR = 2000.0
 MIN_HISTORY = 4
 
 
