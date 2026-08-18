@@ -1,0 +1,556 @@
+{
+  "schema_version": 1,
+  "note": "Frozen 2026-08-18 from index2.csv (355 rows, 155 videos present) BEFORE downloading the full 1500-clip Kaggle set. Matches the 3.7 GB cached pipeline output in eval/anticipation/.",
+  "counts": {
+    "eval": {
+      "pos": 60,
+      "neg": 60
+    },
+    "dev": {
+      "pos": 5,
+      "neg": 10
+    }
+  },
+  "clips": {
+    "68": {
+      "split": "eval",
+      "label": 1
+    },
+    "86": {
+      "split": "eval",
+      "label": 1
+    },
+    "109": {
+      "split": "eval",
+      "label": 1
+    },
+    "110": {
+      "split": "eval",
+      "label": 1
+    },
+    "171": {
+      "split": "dev",
+      "label": 1
+    },
+    "190": {
+      "split": "eval",
+      "label": 1
+    },
+    "194": {
+      "split": "eval",
+      "label": 1
+    },
+    "206": {
+      "split": "eval",
+      "label": 1
+    },
+    "234": {
+      "split": "dev",
+      "label": 1
+    },
+    "237": {
+      "split": "eval",
+      "label": 1
+    },
+    "262": {
+      "split": "eval",
+      "label": 1
+    },
+    "294": {
+      "split": "eval",
+      "label": 1
+    },
+    "308": {
+      "split": "eval",
+      "label": 1
+    },
+    "311": {
+      "split": "eval",
+      "label": 1
+    },
+    "343": {
+      "split": "eval",
+      "label": 1
+    },
+    "358": {
+      "split": "eval",
+      "label": 1
+    },
+    "488": {
+      "split": "eval",
+      "label": 1
+    },
+    "502": {
+      "split": "eval",
+      "label": 1
+    },
+    "503": {
+      "split": "eval",
+      "label": 1
+    },
+    "522": {
+      "split": "eval",
+      "label": 1
+    },
+    "584": {
+      "split": "eval",
+      "label": 1
+    },
+    "596": {
+      "split": "eval",
+      "label": 1
+    },
+    "600": {
+      "split": "eval",
+      "label": 1
+    },
+    "607": {
+      "split": "eval",
+      "label": 1
+    },
+    "608": {
+      "split": "eval",
+      "label": 1
+    },
+    "621": {
+      "split": "eval",
+      "label": 1
+    },
+    "630": {
+      "split": "eval",
+      "label": 1
+    },
+    "633": {
+      "split": "eval",
+      "label": 1
+    },
+    "638": {
+      "split": "eval",
+      "label": 1
+    },
+    "641": {
+      "split": "dev",
+      "label": 1
+    },
+    "648": {
+      "split": "eval",
+      "label": 1
+    },
+    "650": {
+      "split": "eval",
+      "label": 1
+    },
+    "661": {
+      "split": "eval",
+      "label": 1
+    },
+    "688": {
+      "split": "eval",
+      "label": 1
+    },
+    "690": {
+      "split": "eval",
+      "label": 1
+    },
+    "695": {
+      "split": "eval",
+      "label": 1
+    },
+    "696": {
+      "split": "eval",
+      "label": 1
+    },
+    "702": {
+      "split": "eval",
+      "label": 1
+    },
+    "719": {
+      "split": "eval",
+      "label": 1
+    },
+    "722": {
+      "split": "eval",
+      "label": 1
+    },
+    "733": {
+      "split": "eval",
+      "label": 1
+    },
+    "734": {
+      "split": "eval",
+      "label": 1
+    },
+    "780": {
+      "split": "eval",
+      "label": 1
+    },
+    "793": {
+      "split": "eval",
+      "label": 1
+    },
+    "795": {
+      "split": "eval",
+      "label": 1
+    },
+    "819": {
+      "split": "eval",
+      "label": 1
+    },
+    "838": {
+      "split": "dev",
+      "label": 1
+    },
+    "847": {
+      "split": "eval",
+      "label": 1
+    },
+    "858": {
+      "split": "eval",
+      "label": 1
+    },
+    "879": {
+      "split": "eval",
+      "label": 1
+    },
+    "897": {
+      "split": "eval",
+      "label": 1
+    },
+    "900": {
+      "split": "eval",
+      "label": 1
+    },
+    "917": {
+      "split": "eval",
+      "label": 1
+    },
+    "927": {
+      "split": "eval",
+      "label": 1
+    },
+    "932": {
+      "split": "eval",
+      "label": 1
+    },
+    "935": {
+      "split": "eval",
+      "label": 1
+    },
+    "966": {
+      "split": "eval",
+      "label": 1
+    },
+    "973": {
+      "split": "dev",
+      "label": 1
+    },
+    "978": {
+      "split": "eval",
+      "label": 1
+    },
+    "981": {
+      "split": "eval",
+      "label": 1
+    },
+    "983": {
+      "split": "eval",
+      "label": 1
+    },
+    "997": {
+      "split": "eval",
+      "label": 1
+    },
+    "1004": {
+      "split": "eval",
+      "label": 1
+    },
+    "1012": {
+      "split": "eval",
+      "label": 1
+    },
+    "1024": {
+      "split": "eval",
+      "label": 1
+    },
+    "1042": {
+      "split": "eval",
+      "label": 0
+    },
+    "1054": {
+      "split": "eval",
+      "label": 0
+    },
+    "1085": {
+      "split": "eval",
+      "label": 0
+    },
+    "1094": {
+      "split": "eval",
+      "label": 0
+    },
+    "1103": {
+      "split": "eval",
+      "label": 0
+    },
+    "1118": {
+      "split": "dev",
+      "label": 0
+    },
+    "1138": {
+      "split": "eval",
+      "label": 0
+    },
+    "1147": {
+      "split": "eval",
+      "label": 0
+    },
+    "1157": {
+      "split": "eval",
+      "label": 0
+    },
+    "1173": {
+      "split": "eval",
+      "label": 0
+    },
+    "1182": {
+      "split": "eval",
+      "label": 0
+    },
+    "1191": {
+      "split": "eval",
+      "label": 0
+    },
+    "1197": {
+      "split": "eval",
+      "label": 0
+    },
+    "1213": {
+      "split": "dev",
+      "label": 0
+    },
+    "1217": {
+      "split": "dev",
+      "label": 0
+    },
+    "1232": {
+      "split": "eval",
+      "label": 0
+    },
+    "1249": {
+      "split": "eval",
+      "label": 0
+    },
+    "1261": {
+      "split": "eval",
+      "label": 0
+    },
+    "1262": {
+      "split": "eval",
+      "label": 0
+    },
+    "1263": {
+      "split": "eval",
+      "label": 0
+    },
+    "1278": {
+      "split": "eval",
+      "label": 0
+    },
+    "1284": {
+      "split": "eval",
+      "label": 0
+    },
+    "1289": {
+      "split": "eval",
+      "label": 0
+    },
+    "1290": {
+      "split": "eval",
+      "label": 0
+    },
+    "1294": {
+      "split": "eval",
+      "label": 0
+    },
+    "1302": {
+      "split": "eval",
+      "label": 0
+    },
+    "1324": {
+      "split": "eval",
+      "label": 0
+    },
+    "1372": {
+      "split": "dev",
+      "label": 0
+    },
+    "1380": {
+      "split": "eval",
+      "label": 0
+    },
+    "1399": {
+      "split": "eval",
+      "label": 0
+    },
+    "1426": {
+      "split": "eval",
+      "label": 0
+    },
+    "1446": {
+      "split": "eval",
+      "label": 0
+    },
+    "1486": {
+      "split": "eval",
+      "label": 0
+    },
+    "1518": {
+      "split": "eval",
+      "label": 0
+    },
+    "1545": {
+      "split": "eval",
+      "label": 0
+    },
+    "1557": {
+      "split": "eval",
+      "label": 0
+    },
+    "1563": {
+      "split": "eval",
+      "label": 0
+    },
+    "1564": {
+      "split": "eval",
+      "label": 0
+    },
+    "1584": {
+      "split": "eval",
+      "label": 0
+    },
+    "1597": {
+      "split": "eval",
+      "label": 0
+    },
+    "1635": {
+      "split": "dev",
+      "label": 0
+    },
+    "1654": {
+      "split": "eval",
+      "label": 0
+    },
+    "1682": {
+      "split": "eval",
+      "label": 0
+    },
+    "1695": {
+      "split": "eval",
+      "label": 0
+    },
+    "1722": {
+      "split": "dev",
+      "label": 0
+    },
+    "1733": {
+      "split": "eval",
+      "label": 0
+    },
+    "1772": {
+      "split": "eval",
+      "label": 0
+    },
+    "1801": {
+      "split": "dev",
+      "label": 0
+    },
+    "1813": {
+      "split": "eval",
+      "label": 0
+    },
+    "1840": {
+      "split": "eval",
+      "label": 0
+    },
+    "1849": {
+      "split": "eval",
+      "label": 0
+    },
+    "1932": {
+      "split": "eval",
+      "label": 0
+    },
+    "1948": {
+      "split": "eval",
+      "label": 0
+    },
+    "1972": {
+      "split": "eval",
+      "label": 0
+    },
+    "1980": {
+      "split": "eval",
+      "label": 0
+    },
+    "2004": {
+      "split": "eval",
+      "label": 0
+    },
+    "2011": {
+      "split": "eval",
+      "label": 0
+    },
+    "2016": {
+      "split": "eval",
+      "label": 0
+    },
+    "2017": {
+      "split": "eval",
+      "label": 0
+    },
+    "2019": {
+      "split": "dev",
+      "label": 0
+    },
+    "2022": {
+      "split": "eval",
+      "label": 0
+    },
+    "2027": {
+      "split": "eval",
+      "label": 0
+    },
+    "2037": {
+      "split": "dev",
+      "label": 0
+    },
+    "2046": {
+      "split": "eval",
+      "label": 0
+    },
+    "2062": {
+      "split": "dev",
+      "label": 0
+    },
+    "2069": {
+      "split": "eval",
+      "label": 0
+    },
+    "2115": {
+      "split": "eval",
+      "label": 0
+    },
+    "2130": {
+      "split": "eval",
+      "label": 0
+    },
+    "2133": {
+      "split": "eval",
+      "label": 0
+    },
+    "2137": {
+      "split": "eval",
+      "label": 0
+    }
+  }
+}

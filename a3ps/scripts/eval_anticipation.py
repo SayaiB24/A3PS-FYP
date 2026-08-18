@@ -9,6 +9,16 @@ clip when any ALERT / VIRTUAL_BRAKE fires, and reports, for BOTH methods:
   * false-alarm rate -- fraction of negatives that raised any alert.
   * mTTA (s)        -- mean Time-To-Accident over anticipated positives:
     mean(event_time - first_alert_time).
+  * useful warning rate -- fraction of positives warned inside the dataset's OWN
+    actionable window ``[alert_time_s, event_time_s]``. See USEFUL_SLACK_S: this
+    is keyed to Nexar's ``time_of_alert`` annotation, not to a window we chose.
+  * official-style Nexar AP -- clip ranking using only the frames available
+    500 / 1000 / 1500 ms before the annotated event, plus their mean. See
+    :func:`nexar_cutoff_ap`.
+
+Every run first checks the index against ``eval/split_freeze.json`` and refuses
+to score a drifted held-out split (``--allow-split-drift`` to override). See
+``a3ps/common/splits.py`` for why that guard exists.
 
 The two methods:
 
@@ -27,7 +37,7 @@ decoupled: the pipeline writes ``<clips-dir>/<clip_id>/events.json`` per clip
 (no video, ``render=False``), and this script scores those. Add ``--run`` to
 process any clip whose events.json is missing (needs GPU/model):
 
-    python scripts/eval_anticipation.py --index data/nexar/index.csv --split eval --run
+    python scripts/eval_anticipation.py --index eval/nexar_index_gpu.csv --split eval --run
 
 Without ``--run`` it scores whatever is already processed (no GPU needed).
 
@@ -43,7 +53,7 @@ Precision/recall are then recomputed directly from that cache for every
 Writes ``eval/pr_curve_data.csv`` (columns: threshold, precision, recall) and
 ``eval/pr_curve.png``:
 
-    python scripts/eval_anticipation.py --index data/nexar/index.csv --split eval --sweep
+    python scripts/eval_anticipation.py --index eval/nexar_index_gpu.csv --split eval --sweep
 """
 
 import argparse
@@ -56,6 +66,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # for run_pipeline hooks
 
 from a3ps.common.schema import ClipResult  # noqa: E402
+from a3ps.common.splits import (  # noqa: E402
+    DEFAULT_FREEZE_PATH,
+    load_freeze,
+    verify_freeze,
+)
 from a3ps.risk.collision import point_in_dilated_polygon  # noqa: E402
 
 DEFAULT_ALERT_TYPES = ("ALERT", "VIRTUAL_BRAKE")
@@ -67,20 +82,39 @@ DEFAULT_ALERT_TYPES = ("ALERT", "VIRTUAL_BRAKE")
 REACTIVE_BEV_THRESH_M = 2.0
 REACTIVE_IMG_FRAC = 0.08
 
-# "Useful warning" window, in seconds before the annotated collision.
+# "Useful warning" window -- now keyed to the dataset's OWN annotation.
 #
-# Why this exists: mTTA rewards warning EARLY without bound, so a method that
-# alarms in the first frame of every clip scores a huge mTTA and an unbeatable
-# anticipation gain while telling the driver nothing. The reactive-proximity
-# baseline does exactly that -- on the Nexar eval clips it fires within 2 s of
-# clip start on ~76% of positives, roughly 18 s before impact. A warning is only
-# actionable in a band: late enough to be about THIS hazard, early enough to
-# brake. Outside that band it is either noise or a surprise.
+# Why the metric exists at all: mTTA rewards warning EARLY without bound, so a
+# method that alarms in the first frame of every clip scores a huge mTTA and an
+# unbeatable anticipation gain while telling the driver nothing. The
+# reactive-proximity baseline does exactly that -- on the Nexar eval clips it
+# fires within 2 s of clip start on ~76% of positives, roughly 18 s before
+# impact. A warning is only actionable in a band: late enough to be about THIS
+# hazard, early enough to brake.
 #
-# Lower bound: below ~0.5 s there is no time to react at all.
-# Upper bound: beyond ~6 s the warning cannot be attributed to the event.
-USEFUL_WINDOW_LO_S = 0.5
-USEFUL_WINDOW_HI_S = 6.0
+# Why it changed: the band used to be a pair of constants WE picked (0.5 s to
+# 6.0 s before impact). Nexar already annotates the band's lower edge itself --
+# `time_of_alert`, the ground-truth earliest actionable moment -- and carries it
+# per clip in `alert_time_s`. Measured over the 65 local positives, the real
+# lead (`time_of_event - time_of_alert`) is 2.97-4.47 s (mean 3.49, sd 0.40), so
+# the invented 6.0 s ceiling was ~2.5 s too generous and the invented 0.5 s
+# floor was unrelated to anything in the data.
+#
+# The window is therefore now PER CLIP:
+#
+#     useful  <=>  alert_time_s - slack  <=  first_alert_t  <=  event_time_s
+#
+# Firing before `alert_time_s` is not credit-worthy: by the dataset's own
+# annotation there was nothing actionable to see yet, so an earlier alarm is
+# either luck or a standing false alarm. Firing after `event_time_s` is too late
+# by definition. `slack` (default 0) grants grace for annotation jitter without
+# reintroducing a made-up window; set it explicitly if you want that grace, and
+# say so in the writeup.
+USEFUL_SLACK_S = 0.0
+
+# Official-style Nexar anticipation cutoffs: the clip is scored using only the
+# frames available up to N ms BEFORE the annotated event, then ranked by AP.
+NEXAR_CUTOFFS_S = (0.5, 1.0, 1.5)
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +134,9 @@ def load_manifest(index_path, split):
             "path": r.get("path", ""),
             "label": _to_int(r.get("label")),
             "event_time_s": _to_float(r.get("event_time_s")),
+            # Nexar's ground-truth "earliest actionable moment". Present for
+            # positives, blank for negatives -- see USEFUL_SLACK_S.
+            "alert_time_s": _to_float(r.get("alert_time_s")),
         })
     return out
 
@@ -142,6 +179,40 @@ def summarize_clip(clip_result, alert_types):
     return first_alert_t, peak
 
 
+def frame_prob_timeline(clip_result):
+    """Per-frame max collision probability over all tracks -> [(t, max_prob)].
+
+    The single source of truth for "what score did the model hold at time t".
+    Used by the per-frame cache (threshold sweep) and by the Nexar cutoff AP, so
+    the two can never drift apart in how they reduce a frame to one number.
+    """
+    out = []
+    for fr in clip_result.frames:
+        max_p = 0.0
+        for tr in fr.tracks:
+            p = getattr(tr.prediction, "collision_prob", None) if tr.prediction else None
+            if p is not None and p > max_p:
+                max_p = float(p)
+        out.append((float(fr.t), max_p))
+    return out
+
+
+def score_before(timeline, cutoff_t):
+    """Max prob over frames at or before ``cutoff_t`` (None => whole clip).
+
+    This is the clip-level score under a truncated observation window: what the
+    model would have output if the video had been cut at ``cutoff_t``. Returns
+    0.0 when no frame qualifies (a cutoff earlier than the first frame).
+    """
+    best = 0.0
+    for t, p in timeline:
+        if cutoff_t is not None and t > cutoff_t:
+            break
+        if p > best:
+            best = p
+    return best
+
+
 def reactive_first_alert(clip_result, frame_height,
                          bev_thresh=REACTIVE_BEV_THRESH_M, img_frac=REACTIVE_IMG_FRAC):
     """First time ANY actor is close to the ego corridor (naive reactive ADAS).
@@ -179,26 +250,114 @@ def clip_events_path(clips_dir, clip_id):
 def average_precision(scores, labels):
     """Average precision over clip scores (1=positive, 0=negative).
 
-    Exact area under the precision-recall curve. Ties are broken by input
-    order; NaN if there are no positives.
+    Area under the precision-recall curve, computed over TIE GROUPS: all clips
+    sharing a score are consumed together before precision/recall are read off.
+    NaN if there are no positives.
+
+    Why tie handling is not a detail here. This pipeline's clip score is a max
+    over a saturating probability, so scores pile up on exactly 1.0 -- on the
+    120-clip eval split, 101 clips (57 positive, 44 negative) tie at 1.0000 and
+    the whole split takes only 7 distinct values. The earlier implementation
+    walked a plain descending sort and broke ties by input order. Python's sort
+    is stable, so the tied block kept CSV order -- and the index lists all 60
+    positives before all 60 negatives, which ranked every tied positive above
+    every tied negative. That reported AP 0.978. The identical scores with the
+    rows reversed give 0.371, and the mean over 200 random row orders is 0.579.
+    The number was measuring the index's sort order, not the model.
+
+    Consuming ties as a group removes the dependence on input order entirely and
+    yields the expected value over random tie orderings, which is the only
+    defensible reading of a tied ranking.
     """
-    pos = sum(1 for y in labels if y == 1)
+    n = min(len(scores), len(labels))
+    pos = sum(1 for y in labels[:n] if y == 1)
     if pos == 0:
         return float("nan")
-    order = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+
+    order = sorted(range(n), key=lambda i: scores[i], reverse=True)
     tp = fp = 0
     ap = 0.0
     prev_recall = 0.0
-    for i in order:
-        if labels[i] == 1:
-            tp += 1
-        else:
-            fp += 1
+    i = 0
+    while i < n:
+        tie_score = scores[order[i]]
+        j = i
+        while j < n and scores[order[j]] == tie_score:
+            if labels[order[j]] == 1:
+                tp += 1
+            else:
+                fp += 1
+            j += 1
         recall = tp / pos
         precision = tp / (tp + fp)
         ap += (recall - prev_recall) * precision
         prev_recall = recall
+        i = j
     return ap
+
+
+def nexar_cutoff_ap(rows, cutoffs=NEXAR_CUTOFFS_S, truncate_negatives=False):
+    """Official-style Nexar AP: rank clips using only pre-event observations.
+
+    For each cutoff ``tau`` the clip's score is the max collision probability
+    the model held over the frames it would have seen if the video had been cut
+    ``tau`` seconds before the annotated event. AP is then computed over all
+    scored clips at that cutoff, and the three cutoffs are averaged into
+    ``mean_AP`` -- the headline number the Nexar task reports.
+
+    Each row needs: ``label``, ``event_time_s``, ``timeline`` (from
+    :func:`frame_prob_timeline`), ``processed``.
+
+    Negatives have no ``event_time_s``, so there is nothing to truncate them at.
+    By default they are scored over their FULL clip, which is what the official
+    setup does (a negative video is just a video) and which is the conservative
+    choice for us: negatives get more frames than positives and therefore more
+    opportunity to produce a high max, so any AP reported here is a lower bound
+    on what a length-matched comparison would give. Pass
+    ``truncate_negatives=True`` to instead cut every negative at
+    ``median(event_time_s) - tau`` over the positives, which equalises observed
+    duration at the cost of departing from the official protocol; report which
+    one you used.
+    """
+    used = [r for r in rows if r.get("processed") and r.get("timeline")]
+    pos_events = [r["event_time_s"] for r in used
+                  if r["label"] == 1 and r["event_time_s"] is not None]
+    median_event = None
+    if pos_events:
+        ordered = sorted(pos_events)
+        mid = len(ordered) // 2
+        median_event = (ordered[mid] if len(ordered) % 2
+                        else 0.5 * (ordered[mid - 1] + ordered[mid]))
+
+    per_cutoff = {}
+    for tau in cutoffs:
+        scores, labels = [], []
+        for r in used:
+            if r["label"] == 1:
+                te = r["event_time_s"]
+                if te is None:
+                    continue          # a positive with no event time is unscorable
+                cutoff = te - tau
+            else:
+                cutoff = (median_event - tau
+                          if (truncate_negatives and median_event is not None)
+                          else None)
+            scores.append(score_before(r["timeline"], cutoff))
+            labels.append(1 if r["label"] == 1 else 0)
+        per_cutoff[tau] = {
+            "AP": average_precision(scores, labels),
+            "n": len(scores),
+            "n_positive": sum(labels),
+        }
+
+    aps = [v["AP"] for v in per_cutoff.values()
+           if not (isinstance(v["AP"], float) and math.isnan(v["AP"]))]
+    return {
+        "per_cutoff": per_cutoff,
+        "mean_AP": (sum(aps) / len(aps)) if aps else float("nan"),
+        "truncate_negatives": bool(truncate_negatives),
+        "negative_cutoff_s": (median_event if truncate_negatives else None),
+    }
 
 
 def matched_subset_metrics(rows):
@@ -268,13 +427,8 @@ def cache_frame_probs(clip_result, clip_id, cache_dir, force=False):
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["t", "max_prob"])
-        for fr in clip_result.frames:
-            max_p = 0.0
-            for tr in fr.tracks:
-                p = getattr(tr.prediction, "collision_prob", None) if tr.prediction else None
-                if p is not None and p > max_p:
-                    max_p = float(p)
-            w.writerow([f"{fr.t:.3f}", f"{max_p:.4f}"])
+        for t, max_p in frame_prob_timeline(clip_result):
+            w.writerow([f"{t:.3f}", f"{max_p:.4f}"])
     return path
 
 
@@ -386,16 +540,20 @@ def render_pr_curve(path_png, sweep):
     plt.close(fig)
 
 
-def compute_metrics(rows, useful_lo=USEFUL_WINDOW_LO_S, useful_hi=USEFUL_WINDOW_HI_S):
+def compute_metrics(rows, useful_slack=USEFUL_SLACK_S):
     """Aggregate per-clip rows into anticipation metrics.
 
-    Each row: {clip_id, label, event_time_s, first_alert_t, peak_prob,
-    processed}. Only processed rows contribute. Returns (summary, detail_rows).
-    Works for either method -- pass rows whose ``first_alert_t`` is the A3PS
-    alert time or the reactive-baseline alert time.
+    Each row: {clip_id, label, event_time_s, alert_time_s, first_alert_t,
+    peak_prob, processed}. Only processed rows contribute. Returns (summary,
+    detail_rows). Works for either method -- pass rows whose ``first_alert_t`` is
+    the A3PS alert time or the reactive-baseline alert time.
 
-    ``useful_lo``/``useful_hi`` bound the actionable warning window used for
-    ``useful_warning_rate`` (see USEFUL_WINDOW_LO_S).
+    ``useful_warning_rate`` is keyed to the dataset's per-clip ``alert_time_s``
+    (see USEFUL_SLACK_S): a warning counts as useful iff it lands in
+    ``[alert_time_s - useful_slack, event_time_s]``. Its denominator is every
+    positive that carries BOTH times, so a miss, an alarm that arrives after
+    impact, and an alarm that fired before anything was there to see all count
+    against it equally.
     """
     used = [r for r in rows if r["processed"]]
     pos = [r for r in used if r["label"] == 1]
@@ -404,22 +562,29 @@ def compute_metrics(rows, useful_lo=USEFUL_WINDOW_LO_S, useful_hi=USEFUL_WINDOW_
     ttas = []
     detected = 0
     useful = 0
-    n_timed = 0            # positives with a known event time (useful-rate denominator)
+    early = 0             # fired before alert_time_s: not actionable, not credit
+    n_timed = 0           # positives with BOTH event and alert times (useful denominator)
     for r in pos:
         te = r["event_time_s"]
+        ta = r.get("alert_time_s")
         fa = r["first_alert_t"]
         anticipated = fa is not None and (te is None or fa <= te)
         r["anticipated"] = anticipated
-        if te is not None:
+        scorable = te is not None and ta is not None
+        if scorable:
             n_timed += 1
         r["useful"] = False
+        r["too_early"] = False
         if anticipated:
             detected += 1
             if te is not None:
-                tta = te - fa
-                ttas.append(tta)
-                # Actionable only inside the window -- see USEFUL_WINDOW_*.
-                if useful_lo <= tta <= useful_hi:
+                ttas.append(te - fa)
+            if scorable:
+                if fa < ta - useful_slack:
+                    # Warned before the ground-truth earliest actionable moment.
+                    r["too_early"] = True
+                    early += 1
+                else:
                     r["useful"] = True
                     useful += 1
 
@@ -441,13 +606,18 @@ def compute_metrics(rows, useful_lo=USEFUL_WINDOW_LO_S, useful_hi=USEFUL_WINDOW_
         "mTTA_s": (sum(ttas) / len(ttas)) if ttas else float("nan"),
         "n_tta": len(ttas),
         "false_alarm_rate": (false_alarms / len(neg)) if neg else float("nan"),
-        # Fraction of ALL timed positives (not just anticipated ones) warned
-        # inside the actionable window: a miss and an unusably-early warning
-        # both count against it, which is the point.
+        # Fraction of ALL scorable positives (not just anticipated ones) warned
+        # inside [alert_time_s - slack, event_time_s]: a miss, a too-late alarm
+        # and a fired-before-anything-was-there alarm all count against it.
         "useful_warning_rate": (useful / n_timed) if n_timed else float("nan"),
         "n_useful": useful,
+        "n_too_early": early,
         "n_timed": n_timed,
-        "useful_window": (useful_lo, useful_hi),
+        "useful_slack_s": float(useful_slack),
+        "useful_window_def": (
+            "[alert_time_s - {:.2f}s, event_time_s] per clip "
+            "(ground truth, not a chosen window)".format(float(useful_slack))
+        ),
         "AP": average_precision(scores, labels),
     }
     return summary, used
@@ -505,7 +675,45 @@ def _tta(label, first_alert_t, event_time_s):
     return None
 
 
-def build_report(a3ps, reactive, split, thresholds, matched=None):
+def _nexar_ap_section(nexar):
+    """Markdown block for the official-style pre-event AP cutoffs."""
+    if nexar is None:
+        return []
+    neg_note = (
+        "negatives truncated at median(event_time) - cutoff = "
+        "{:.2f} s (length-matched, NOT the official protocol)".format(
+            nexar["negative_cutoff_s"])
+        if nexar["truncate_negatives"] else
+        "negatives scored over their full clip (official protocol; gives "
+        "negatives more frames than positives, so this AP is a lower bound)"
+    )
+    lines = [
+        "## Official-style Nexar AP at pre-event cutoffs",
+        "",
+        "Each clip is ranked by the highest collision probability the model "
+        "held using ONLY the frames it would have seen had the video been cut "
+        "the stated interval before the annotated event. This is the "
+        "dataset's own anticipation protocol, independent of our alert "
+        "thresholds and decision state machine.",
+        "",
+        "| cutoff before event | AP | clips scored |",
+        "|---|---|---|",
+    ]
+    for tau in sorted(nexar["per_cutoff"]):
+        v = nexar["per_cutoff"][tau]
+        lines.append("| {:.0f} ms | {} | {} ({} pos) |".format(
+            tau * 1000, _fmt(v["AP"]), v["n"], v["n_positive"]))
+    lines += [
+        "",
+        f"**mean AP over the three cutoffs: {_fmt(nexar['mean_AP'])}**",
+        "",
+        f"_{neg_note}._",
+        "",
+    ]
+    return lines
+
+
+def build_report(a3ps, reactive, split, thresholds, matched=None, nexar=None):
     """Markdown report comparing A3PS vs the reactive-proximity baseline.
 
     ``matched`` (optional, from :func:`matched_subset_metrics`) adds a
@@ -526,20 +734,27 @@ def build_report(a3ps, reactive, split, thresholds, matched=None):
         f"- reactive baseline: BEV < {REACTIVE_BEV_THRESH_M} m "
         f"(else img < {int(REACTIVE_IMG_FRAC * 100)}% of frame height) to the ego corridor",
         "",
-        f"| method | detection rate | false-alarm rate | mTTA (s) | "
-        f"useful warning rate ({_fmt(a3ps['useful_window'][0], 1)}-"
-        f"{_fmt(a3ps['useful_window'][1], 1)} s) |",
-        "|---|---|---|---|---|",
+        "| method | detection rate | false-alarm rate | mTTA (s) | "
+        "useful warning rate | fired too early |",
+        "|---|---|---|---|---|---|",
         f"| **A3PS (proactive)** | {_fmt(a3ps['detection_recall'])} "
         f"| {_fmt(a3ps['false_alarm_rate'])} "
         f"| {_fmt(a3ps['mTTA_s'], 2)} (n={a3ps['n_tta']}) "
         f"| {_fmt(a3ps['useful_warning_rate'])} "
-        f"({a3ps['n_useful']}/{a3ps['n_timed']}) |",
+        f"({a3ps['n_useful']}/{a3ps['n_timed']}) "
+        f"| {a3ps['n_too_early']}/{a3ps['n_timed']} |",
         f"| Reactive-proximity (baseline) | {_fmt(reactive['detection_recall'])} "
         f"| {_fmt(reactive['false_alarm_rate'])} "
         f"| {_fmt(reactive['mTTA_s'], 2)} (n={reactive['n_tta']}) "
         f"| {_fmt(reactive['useful_warning_rate'])} "
-        f"({reactive['n_useful']}/{reactive['n_timed']}) |",
+        f"({reactive['n_useful']}/{reactive['n_timed']}) "
+        f"| {reactive['n_too_early']}/{reactive['n_timed']} |",
+        "",
+        f"_Useful-warning window: **{a3ps['useful_window_def']}**. "
+        "`time_of_alert` is Nexar's own annotation of the earliest actionable "
+        "moment, so this window is the dataset's, not ours. The measured lead "
+        "(`time_of_event - time_of_alert`) is 2.97-4.47 s over the 65 local "
+        "positives (mean 3.49, sd 0.40)._",
         "",
         "_The mTTA row above is averaged over each method's own true-positive "
         "set (different n, different clips) -- do NOT read the difference "
@@ -551,9 +766,9 @@ def build_report(a3ps, reactive, split, thresholds, matched=None):
         "so a method that alarms on the first frame of every clip maximises it "
         "while telling the driver nothing -- which is exactly what the reactive "
         "baseline does here. The useful warning rate instead counts positives "
-        "warned inside a window that is late enough to concern this hazard and "
-        "early enough to brake; both misses and unusably-early alarms count "
-        "against it._",
+        "warned inside the dataset's own actionable window; misses, too-late "
+        "alarms and alarms fired before `time_of_alert` all count against it. "
+        "The 'fired too early' column isolates that last failure mode._",
         "",
     ]
 
@@ -584,7 +799,11 @@ def build_report(a3ps, reactive, split, thresholds, matched=None):
             "",
         ]
 
-    lines.append(f"_A3PS AP (peak-prob ranking): {_fmt(a3ps['AP'])}_")
+    lines += _nexar_ap_section(nexar)
+
+    lines.append(f"_A3PS AP (whole-clip peak-prob ranking): {_fmt(a3ps['AP'])} "
+                 "-- uses every frame including post-event ones, so it is NOT "
+                 "an anticipation number; compare the cutoff APs above instead._")
     lines.append("")
     return "\n".join(lines)
 
@@ -593,9 +812,11 @@ def write_per_clip_csv(path, rows):
     """One row per clip: label, event time, and both methods' alert/tta/outcome."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     cols = [
-        "clip_id", "label", "processed", "event_time_s",
+        "clip_id", "label", "processed", "event_time_s", "alert_time_s",
         "a3ps_first_alert_t", "a3ps_tta_s", "a3ps_flagged", "a3ps_outcome",
+        "a3ps_useful", "a3ps_too_early",
         "reactive_first_alert_t", "reactive_tta_s", "reactive_flagged", "reactive_outcome",
+        "reactive_useful", "reactive_too_early",
         "peak_prob",
     ]
     with open(path, "w", newline="", encoding="utf-8") as fh:
@@ -605,19 +826,25 @@ def write_per_clip_csv(path, rows):
             lbl = r["label"]
             a_fa, r_fa, te = r["a3ps_first_alert_t"], r["reactive_first_alert_t"], r["event_time_s"]
             a_tta, r_tta = _tta(lbl, a_fa, te), _tta(lbl, r_fa, te)
+            ta = r.get("alert_time_s")
             w.writerow([
                 r["clip_id"],
                 "pos" if lbl == 1 else ("neg" if lbl == 0 else ""),
                 int(bool(r["processed"])),
                 "" if te is None else f"{te:.3f}",
+                "" if ta is None else f"{ta:.3f}",
                 "" if a_fa is None else f"{a_fa:.3f}",
                 "" if a_tta is None else f"{a_tta:.3f}",
                 int(a_fa is not None),
                 _outcome(lbl, a_fa, te) if r["processed"] else "unprocessed",
+                int(bool(r.get("a3ps_useful"))),
+                int(bool(r.get("a3ps_too_early"))),
                 "" if r_fa is None else f"{r_fa:.3f}",
                 "" if r_tta is None else f"{r_tta:.3f}",
                 int(r_fa is not None),
                 _outcome(lbl, r_fa, te) if r["processed"] else "unprocessed",
+                int(bool(r.get("reactive_useful"))),
+                int(bool(r.get("reactive_too_early"))),
                 f"{r['peak_prob']:.4f}",
             ])
 
@@ -626,10 +853,29 @@ def write_per_clip_csv(path, rows):
 # main
 # ---------------------------------------------------------------------------
 
+def _check_split_freeze(index_path, freeze):
+    """Verify the WHOLE index (all splits) against the freeze. -> (ok, problems).
+
+    Reads the index directly rather than reusing ``load_manifest``, because the
+    freeze covers dev and eval together and the drift that matters most is a
+    clip having moved between them.
+    """
+    with open(index_path, newline="", encoding="utf-8-sig") as fh:
+        rows = list(csv.DictReader(fh))
+    records = [{"clip_id": r.get("clip_id", ""),
+                "label": _to_int(r.get("label")) or 0,
+                "split": r.get("split", "") or ""} for r in rows]
+    return verify_freeze(records, freeze)
+
+
 def main():
     p = argparse.ArgumentParser(
         description="A3PS vs reactive-proximity anticipation eval.")
-    p.add_argument("--index", default="data/nexar/index.csv")
+    # Default to the tracked GPU-laptop index, NOT data/nexar/index.csv: the two
+    # encode different eval splits that overlap on only 69 of 120 clips, and the
+    # cached output under eval/anticipation/ was produced against this one.
+    # See eval/README.md.
+    p.add_argument("--index", default="eval/nexar_index_gpu.csv")
     p.add_argument("--split", default="eval", choices=["dev", "demo", "eval"])
     p.add_argument("--config", default="configs/default.yaml")
     p.add_argument("--clips-dir", default="eval/anticipation",
@@ -640,11 +886,23 @@ def main():
                    help="Run the pipeline (no rendering) for clips missing events.json.")
     p.add_argument("--alert-types", default=",".join(DEFAULT_ALERT_TYPES),
                    help="Comma-separated event types that count as an alert.")
-    p.add_argument("--useful-lo", type=float, default=USEFUL_WINDOW_LO_S,
-                   help="Lower bound (s before impact) of the actionable "
-                        "warning window used for useful_warning_rate.")
-    p.add_argument("--useful-hi", type=float, default=USEFUL_WINDOW_HI_S,
-                   help="Upper bound (s before impact) of that window.")
+    p.add_argument("--useful-slack", type=float, default=USEFUL_SLACK_S,
+                   help="Seconds of grace before the dataset's alert_time_s "
+                        "that still count as a useful warning (default "
+                        "%(default)s = pure ground truth). Raising this loosens "
+                        "the metric -- say so if you do.")
+    p.add_argument("--truncate-negatives", action="store_true",
+                   help="For the Nexar cutoff AP, also truncate negatives (at "
+                        "median positive event time - cutoff) so both classes "
+                        "are observed for a comparable duration. Departs from "
+                        "the official protocol; report which you used.")
+    p.add_argument("--freeze", default=DEFAULT_FREEZE_PATH,
+                   help="Split-freeze file to check the index against before "
+                        "scoring (default: %(default)s). Pass '' to skip.")
+    p.add_argument("--allow-split-drift", action="store_true",
+                   help="Score anyway when the index disagrees with the freeze. "
+                        "Only for deliberate experiments -- the resulting "
+                        "numbers are not comparable to any previous run.")
     p.add_argument("--out", default="eval/anticipation.md")
     p.add_argument("--per-clip-csv", default="eval/anticipation_per_clip.csv")
     p.add_argument("--sweep", action="store_true",
@@ -662,6 +920,30 @@ def main():
     if not os.path.isfile(args.index):
         print(f"No manifest at {args.index}. Run scripts/prepare_nexar.py first.")
         return
+
+    # Pre-flight: the held-out split must be the one the freeze pinned, or every
+    # number below is incomparable to previous runs (see a3ps/common/splits.py).
+    freeze = load_freeze(args.freeze) if args.freeze else None
+    if freeze is not None:
+        ok, problems = _check_split_freeze(args.index, freeze)
+        if not ok:
+            print(f"SPLIT DRIFT: {len(problems)} disagreement(s) between "
+                  f"{args.index} and {args.freeze}:")
+            for msg in problems[:10]:
+                print(f"  - {msg}")
+            if len(problems) > 10:
+                print(f"  ... and {len(problems) - 10} more")
+            if not args.allow_split_drift:
+                print("\nRefusing to score against a drifted split. Run\n"
+                      f"  python scripts/freeze_split.py verify --index {args.index}\n"
+                      "to see the full report, or pass --allow-split-drift if the "
+                      "change is deliberate (the numbers will not be comparable).")
+                return
+            print("\n--allow-split-drift set: scoring anyway. These numbers are "
+                  "NOT comparable to any previous run.\n")
+    elif args.freeze:
+        print(f"note: no split freeze at {args.freeze} -- split membership is "
+              "unverified. Create one with scripts/freeze_split.py write.")
 
     alert_types = tuple(t.strip() for t in args.alert_types.split(",") if t.strip())
     videos_root = args.videos_root or os.path.dirname(os.path.abspath(args.index))
@@ -689,12 +971,16 @@ def main():
                 print(f"  ! video not found for {m['clip_id']}: {video}")
 
         row = {**m, "a3ps_first_alert_t": None, "reactive_first_alert_t": None,
-               "peak_prob": 0.0, "processed": False}
+               "peak_prob": 0.0, "processed": False, "timeline": None}
         if os.path.isfile(ev_path):
             clip = ClipResult.load_json(ev_path)
             frame_h = int(clip.meta.get("height") or 720)
             row["a3ps_first_alert_t"], row["peak_prob"] = summarize_clip(clip, alert_types)
             row["reactive_first_alert_t"] = reactive_first_alert(clip, frame_h)
+            # Kept in memory for the Nexar cutoff AP: extracted once here from
+            # the ClipResult already loaded, so the cutoff metric costs no extra
+            # parse of the (much larger) events.json.
+            row["timeline"] = frame_prob_timeline(clip)
             row["processed"] = True
             if args.sweep:
                 # One-time extraction from the ClipResult already in memory --
@@ -707,14 +993,23 @@ def main():
     # Score each method with the shared compute_metrics (differ only in first_alert_t).
     def _method_rows(key):
         return [{"clip_id": r["clip_id"], "label": r["label"],
-                 "event_time_s": r["event_time_s"], "first_alert_t": r[key],
+                 "event_time_s": r["event_time_s"],
+                 "alert_time_s": r["alert_time_s"], "first_alert_t": r[key],
                  "peak_prob": r["peak_prob"], "processed": r["processed"]}
                 for r in rows]
 
-    a3ps_summary, _ = compute_metrics(_method_rows("a3ps_first_alert_t"),
-                                      args.useful_lo, args.useful_hi)
-    reactive_summary, _ = compute_metrics(_method_rows("reactive_first_alert_t"),
-                                          args.useful_lo, args.useful_hi)
+    a3ps_rows = _method_rows("a3ps_first_alert_t")
+    reactive_rows = _method_rows("reactive_first_alert_t")
+    a3ps_summary, a3ps_detail = compute_metrics(a3ps_rows, args.useful_slack)
+    reactive_summary, reactive_detail = compute_metrics(reactive_rows, args.useful_slack)
+
+    # Fold the per-clip usefulness verdicts back onto the master rows for the CSV.
+    for src, prefix in ((a3ps_detail, "a3ps"), (reactive_detail, "reactive")):
+        by_id = {r["clip_id"]: r for r in src}
+        for r in rows:
+            d = by_id.get(r["clip_id"])
+            r[f"{prefix}_useful"] = bool(d.get("useful")) if d else False
+            r[f"{prefix}_too_early"] = bool(d.get("too_early")) if d else False
 
     if a3ps_summary["n_processed"] == 0:
         print(f"No processed clips found under {args.clips_dir}. "
@@ -732,8 +1027,11 @@ def main():
                       "floor": float(config.get("threshold_floor", 0.45))}
 
     matched = matched_subset_metrics(rows)
+    nexar = nexar_cutoff_ap(rows, NEXAR_CUTOFFS_S,
+                            truncate_negatives=args.truncate_negatives)
 
-    report = build_report(a3ps_summary, reactive_summary, args.split, thresholds, matched)
+    report = build_report(a3ps_summary, reactive_summary, args.split, thresholds,
+                          matched, nexar)
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fh:
         fh.write(report)
@@ -749,6 +1047,20 @@ def main():
           f"{_fmt(reactive_summary['false_alarm_rate']):>12s} "
           f"{_fmt(reactive_summary['mTTA_s'], 2):>9s} "
           f"{_fmt(reactive_summary['useful_warning_rate']):>8s}")
+    print(f"\nuseful-warning window: {a3ps_summary['useful_window_def']}")
+    print(f"  A3PS fired before alert_time_s on "
+          f"{a3ps_summary['n_too_early']}/{a3ps_summary['n_timed']} positives; "
+          f"reactive on {reactive_summary['n_too_early']}/"
+          f"{reactive_summary['n_timed']}")
+
+    print("\nofficial-style Nexar AP (pre-event cutoffs):")
+    for tau in sorted(nexar["per_cutoff"]):
+        v = nexar["per_cutoff"][tau]
+        print(f"  -{tau * 1000:.0f} ms  AP={_fmt(v['AP'])}  "
+              f"(n={v['n']}, {v['n_positive']} pos)")
+    print(f"  mean AP = {_fmt(nexar['mean_AP'])}"
+          f"{'  [negatives truncated]' if nexar['truncate_negatives'] else ''}")
+
     if matched is not None:
         print(f"\nmatched-subset (n={matched['n_matched']}): "
               f"A3PS {_fmt(matched['a3ps_mtta_s'], 2)}s vs reactive "

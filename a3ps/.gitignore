@@ -24,3 +24,6 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+
+# Phase IV extracted features (regenerate with scripts/extract_features.py)
+data/features/

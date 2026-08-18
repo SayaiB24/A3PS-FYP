@@ -39,6 +39,13 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from a3ps.common.splits import (  # noqa: E402
+    DEFAULT_FREEZE_PATH,
+    SplitFreezeError,
+    apply_freeze,
+    load_freeze,
+)
+
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 TABLE_EXTS = {".xlsx", ".xls", ".csv", ".json"}
 
@@ -316,6 +323,12 @@ def main():
     p.add_argument("--annotation", nargs="*", default=None,
                    help="Annotation file(s) .xlsx/.csv/.json. Default: auto-detect in <root>.")
     p.add_argument("--dev-dir", default="data/dev_clips", help="Where to copy dev clips.")
+    p.add_argument("--freeze", default=DEFAULT_FREEZE_PATH,
+                   help="Split-freeze file (default: %(default)s). When it "
+                        "exists, dev/eval membership is taken from it verbatim "
+                        "and new clips can only join train_traj -- see "
+                        "a3ps/common/splits.py. Pass '' to draw a fresh random "
+                        "split instead (this invalidates every prior number).")
     args = p.parse_args()
 
     os.makedirs(args.root, exist_ok=True)
@@ -338,12 +351,38 @@ def main():
         print("No labelled clips matched. Check videos/ and the Excel `id` column.")
         return
 
-    counts = assign_splits(records)
-    print(f"splits: dev={counts['dev']} eval={counts['eval']} "
-          f"train_traj={counts['train_traj']} unused={counts['unused']}")
-    for name, want in (("dev", DEV_NEG + DEV_POS), ("eval", EVAL_NEG + EVAL_POS)):
-        if counts[name] < want:
-            print(f"  ! {name}: only {counts[name]} available (wanted {want})")
+    freeze = load_freeze(args.freeze) if args.freeze else None
+    if freeze is not None:
+        # Frozen path: dev/eval membership is replayed exactly, so growing the
+        # clip pool can only ever add training data.
+        try:
+            report = apply_freeze(records, freeze)
+        except SplitFreezeError as exc:
+            p.error(f"split freeze conflict: {exc}")
+            return
+        print(f"splits (frozen from {args.freeze}): "
+              + " ".join(f"{k}={v}" for k, v in sorted(report["counts"].items())))
+        print(f"  {report['n_frozen']} clip ids replayed from the freeze; "
+              f"{report['n_unpinned_negatives']} negative(s) in train_traj")
+        if report["n_unpinned_positives"]:
+            shown = report["unpinned_positives"][:10]
+            print(f"  ! {report['n_unpinned_positives']} positive(s) are not in "
+                  f"the freeze and were left UNUSED: {shown}"
+                  f"{' ...' if report['n_unpinned_positives'] > 10 else ''}")
+            print("    Positives are scarce -- assign them deliberately (e.g. to "
+                  "a new 'train_risk' split) rather than letting a default decide.")
+    else:
+        if args.freeze:
+            print(f"note: no freeze at {args.freeze} -- drawing a fresh random split.")
+        else:
+            print("! --freeze '' given: drawing a FRESH RANDOM split. Every number "
+                  "measured against the previous split becomes incomparable.")
+        counts = assign_splits(records)
+        print(f"splits: dev={counts['dev']} eval={counts['eval']} "
+              f"train_traj={counts['train_traj']} unused={counts['unused']}")
+        for name, want in (("dev", DEV_NEG + DEV_POS), ("eval", EVAL_NEG + EVAL_POS)):
+            if counts[name] < want:
+                print(f"  ! {name}: only {counts[name]} available (wanted {want})")
 
     out_csv = os.path.join(args.root, "index.csv")
     with open(out_csv, "w", newline="", encoding="utf-8") as fh:

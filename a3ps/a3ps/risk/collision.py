@@ -89,6 +89,19 @@ def _dist_to_polygon_boundary(pt: Point, poly: List[Point]) -> float:
     return best
 
 
+def signed_distance_to_polygon(pt: Point, poly: List[Point]) -> float:
+    """Signed distance from ``pt`` to ``poly``: negative inside, positive outside.
+
+    Same convention as ``cv2.pointPolygonTest(poly, pt, True)`` with the sign
+    flipped, in pure Python so this module stays dependency-light. Exposed
+    (rather than left private) because the learned risk head in
+    ``a3ps/features/extract.py`` needs a *continuous* corridor-proximity feature,
+    not the boolean that :func:`point_in_dilated_polygon` gives it.
+    """
+    d = _dist_to_polygon_boundary(pt, poly)
+    return -d if point_in_polygon(pt, poly) else d
+
+
 def point_in_dilated_polygon(pt: Point, poly: List[Point], radius: float) -> bool:
     """True if ``pt`` lies within ``radius`` of ``poly`` (Minkowski-disk dilation).
 
