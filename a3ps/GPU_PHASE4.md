@@ -193,7 +193,7 @@ Read the `frac >=2s` column — the fraction of tracks that live long enough to 
 forecastable. The script prints its own verdict:
 
 | result | meaning | action |
-|---|---|---|
+|---        |---     |-     --|
 | within ~3% of 30 Hz | 10 Hz is safe | proceed to step 4 with `--rate-hz 10` |
 | 3–10% worse | borderline | re-run with `--rates 30,15` and use 15 Hz |
 | >10% worse | 10 Hz costs more than it saves | use 30 Hz, accept ~6–12 h |
