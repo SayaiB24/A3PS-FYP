@@ -6,8 +6,8 @@ extractor, ego helper, anticipation loss, temporal head, smoke train) is already
 done and committed.
 
 Run the steps in order. Steps 0–2 are indexing and a cheap measurement; do
-**not** start step 4 (the ~2,844-clip pass) until step 3 has told us which frame
-rate to use.
+**not** start step 4 (the 1,365-clip extraction) until step 3 has told us which
+frame rate to use.
 
 **Confirmed paths for this machine** (from the actual layout you have):
 
@@ -15,18 +15,54 @@ rate to use.
 |---|---|
 | repo | `D:\Coding\FYP\A3PS_MAIN\a3ps` |
 | data root | `D:\Coding\FYP\Nexar-Dataset` |
-| train videos | `D:\Coding\FYP\Nexar-Dataset\train` (1500 clips) |
-| test videos | `D:\Coding\FYP\Nexar-Dataset\test` (1344 clips) |
+| train videos | `D:\Coding\FYP\Nexar-Dataset\train` (1500 clips, **labelled**) |
+| test videos | `D:\Coding\FYP\Nexar-Dataset\test` (1344 clips, **UNLABELLED**) |
 | train labels | `D:\Coding\FYP\Nexar-Dataset\train.csv` |
-| test labels | `D:\Coding\FYP\Nexar-Dataset\test.csv` |
+| test labels | `D:\Coding\FYP\Nexar-Dataset\test.csv` (ids only, no targets) |
 
-Pool size is **2,844 clips**, not the ~1,500 assumed in earlier drafts of this
-doc — the runtime table in step 4 is scaled accordingly.
+### The test split is unusable — this is expected, not a bug
 
-This dataset has already been verified against known-trusted local labels: 355
-overlapping clip ids checked against `eval/nexar_index_gpu.csv`, **0
-mismatches**. It is safe to build on; step 1's overlap check below is kept for
-the record and does not need to be re-run.
+`test.csv` has all 1344 rows present and every id matches a video on disk
+exactly (0 unmatched either way), but **`target` is null and
+`event_time_s`/`alert_time_s` are empty on every single row**. It is the Kaggle
+competition holdout: predictions get submitted, labels are never published.
+
+`prepare_nexar.py` therefore (correctly) indexes only the 1500 labelled train
+clips. **Do not try to "fix" this by re-indexing** — there is no ground truth to
+recover. Verified with:
+
+```powershell
+python -c "
+import sys; sys.path.insert(0,'scripts')
+from prepare_nexar import load_table
+rows = load_table(r'D:\Coding\FYP\Nexar-Dataset\test.csv')
+tgt = {}
+for r in rows: tgt[r['target']] = tgt.get(r['target'],0)+1
+print('rows:', len(rows), 'target distribution:', tgt)
+"
+# -> rows: 1344 target distribution: {None: 1344}
+```
+
+The usable pool is therefore **1,500 clips**, splitting as:
+
+| split | clips | note |
+|---|---|---|
+| `train_risk` | 685 positive | for the learned head |
+| `train_traj` | 680 negative | for the learned head |
+| `eval` | 60 pos + 60 neg | frozen, held out |
+| `dev` | 5 pos + 10 neg | frozen |
+
+685/680 is near-perfectly class-balanced, so no aggressive class weighting is
+needed — and 685 positives is a 10× improvement on the 65 available before.
+
+The labels have been verified against known-trusted local data: 355 overlapping
+clip ids checked against `eval/nexar_index_gpu.csv`, **0 mismatches**. Step 1's
+overlap check below is kept for the record and does not need re-running.
+
+The 1344 unlabelled test clips have exactly one potential use: generating a
+Kaggle submission for an external, unbiased leaderboard AP. Worth considering
+for the writeup if the competition is still open, but not required by anything
+below.
 
 ---
 
@@ -68,9 +104,8 @@ and merges them, so nothing needs to be combined by hand.
 
 Already checked and confirmed:
 
-- 1500 videos in `train\`, 1344 in `test\` (2,844 total).
-- Both `train.csv` and `test.csv` carry real `target` values (not a blank
-  Kaggle submission holdout).
+- 1500 videos in `train\` (labelled), 1344 in `test\` (unlabelled -- see above).
+- `train.csv` carries real `target` values; `test.csv` does NOT (all null).
 - Label agreement: 355 overlapping clip ids matched `eval/nexar_index_gpu.csv`
   with 0 mismatches (see previous message).
 
@@ -112,11 +147,16 @@ for m in mismatches[:20]:
 
 ---
 
-## 2. Re-index WITHOUT re-drawing the eval split
+## 2. Re-index WITHOUT re-drawing the eval split — DONE
+
+Already run; `eval/nexar_index_full.csv` is committed (1500 rows, freeze
+verified OK). Kept below as the record of what was done. Passing `test\` and
+`test.csv` was harmless but contributed nothing, since those rows carry no
+labels — see the note at the top of this file.
 
 This is the step that would silently destroy comparability if done wrong.
 `prepare_nexar.py` assigns splits with a pool-size-dependent shuffle, so simply
-re-running it over 2,844 clips would hand us a different 120-clip held-out set —
+re-running it over a changed clip pool would hand us a different 120-clip held-out set —
 invalidating the 3.7 GB cache and every number measured so far.
 
 The `--freeze` flag (default `eval/split_freeze.json`, committed) prevents that:
@@ -145,13 +185,11 @@ python scripts/prepare_nexar.py --root data/nexar `
 
 Expect `splits (frozen from eval/split_freeze.json): ...` and
 `135 clip ids replayed from the freeze`. Runtime: a few minutes (it probes every
-video's metadata across both folders — 2,844 clips this time, so a bit longer
-than a 155-clip pass).
+video's metadata across the 1500 labelled train clips, so a bit longer than a
+155-clip pass).
 
-**It will also print a warning like `! N positive(s) are not in the freeze and
-were left UNUSED`** (N depends on the real class balance of this 2,844-clip
-pool, which hasn't been counted yet — the printed number is the first time we'll
-know it). That is deliberate — positives are the scarce resource and the script
+**It printed `! 685 positive(s) are not in the freeze and were left UNUSED`.**
+That is deliberate — positives are the scarce resource and the script
 will not silently assign them. Give them a training split explicitly:
 
 ```powershell
@@ -164,7 +202,7 @@ Verify the held-out set survived, then commit the index so the CPU laptop has it
 python scripts/freeze_split.py verify --index data/nexar/index.csv
 Copy-Item data\nexar\index.csv eval\nexar_index_full.csv
 git add eval/nexar_index_full.csv
-git commit -m "eval: full 2844-clip index with frozen dev/eval split"
+git commit -m "eval: full 1500-clip labelled index with frozen dev/eval split"
 git push
 ```
 
@@ -215,10 +253,10 @@ like a model deficiency rather than the extraction artefact it is.
 
 Given one rate everywhere, **10 Hz**:
 
-- Yield is immaterial between the two: ~2,700 training clips gives ~23.8 k
-  forecastable tracks at 10 Hz vs ~24.9 k at 15 Hz. Both are far more than a
+- Yield is immaterial between the two: 1,365 training clips gives ~12.0 k
+  forecastable tracks at 10 Hz vs ~12.6 k at 15 Hz. Both are far more than a
   34 k-parameter GRU needs.
-- 10 Hz is ~1.7 h faster over the full pass (~6.3 h vs ~8.0 h).
+- 10 Hz is ~50 min faster over the full pass (~3.2 h vs ~4.0 h).
 
 So the 4% density advantage of 15 Hz buys nothing, and the consistency
 requirement removes the reason to mix. Step 4's commands all use `--rate-hz 10`.
@@ -260,17 +298,17 @@ extraction adds the optical-flow pass on top).
 
 | scope | clips | s/clip | estimated wall time |
 |---|---|---|---|
-| training (`train_traj` + `train_risk`) | ~2,709 | 8.4 | **~6.3 h** |
+| training (`train_traj` 680 + `train_risk` 685) | 1,365 | 8.4 | **~3.2 h** |
 | held-out eval | 120 | 8.4 | **~17 min** |
 
-That is slower than the 20–40 ms/frame the docs guessed (8.4 s over ~130 frames
-is ~65 ms/frame), so budget closer to **7 h total** than the ~2 h an earlier
-draft of this file estimated. Add 5–15% for the optical-flow pass on top.
+That is slower per frame than the 20–40 ms/frame the docs guessed (8.4 s over
+~130 frames is ~65 ms/frame), but the pool is only 1,500 labelled clips, so the
+whole thing lands at **~3.5 h total**. Add 5–15% for the optical-flow pass on top.
 `--ego-downscale 2` (the default) keeps that cost small; raise it to 4 if decode
 dominates.
 
-Because it is ~7 h rather than ~2 h, run it overnight or in two sittings — the
-script is resumable (below), so splitting it across sessions costs nothing.
+At ~3.5 h you can run it in one sitting; the script is also resumable (below), so
+splitting it across sessions costs nothing if you prefer.
 **Do the eval split first** (17 min): it is the one that must succeed, and any
 extraction bug shows up there before you spend six hours on training data.
 
