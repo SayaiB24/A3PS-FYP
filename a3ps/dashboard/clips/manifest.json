@@ -21,14 +21,14 @@
    "label": "1004 \u00b7 pos \u00b7 learned useful / old too early"
   },
   {
-   "id": "1085",
+   "id": "1042",
    "group": "Phase IV \u2014 learned vs threshold system",
-   "label": "1085 \u00b7 neg \u00b7 both clean"
+   "label": "1042 \u00b7 neg \u00b7 both clean"
   },
   {
-   "id": "1261",
+   "id": "1054",
    "group": "Phase IV \u2014 learned vs threshold system",
-   "label": "1261 \u00b7 neg \u00b7 learned clean / old false alarm"
+   "label": "1054 \u00b7 neg \u00b7 learned clean / old false alarm"
   },
   {
    "id": "dev04",
