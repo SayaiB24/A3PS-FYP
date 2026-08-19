@@ -4,6 +4,21 @@ Grouped by what you are trying to do. Generated evaluation output is **not**
 here — it lives in [`../eval/`](../eval/), because scripts write and read those
 files at fixed paths.
 
+## → [`handoff/`](handoff/) — start here to continue the project
+
+Written for working **without an assistant**: what to do next, how to reproduce
+every committed result by hand, the top-priority improvement as a standalone
+runbook, the problems already solved (for the thesis), and optional future work.
+
+| doc | purpose |
+|---|---|
+| [`handoff/README.md`](handoff/README.md) | Index + current state + the three things most likely to trip you up |
+| [`handoff/NEXT_STEPS.md`](handoff/NEXT_STEPS.md) | Priority-ordered next actions |
+| [`handoff/REPRODUCE_BY_HAND.md`](handoff/REPRODUCE_BY_HAND.md) | End-to-end reproduction: clips → features → training → operating point → dashboard |
+| [`handoff/KAPPA_RETRAIN.md`](handoff/KAPPA_RETRAIN.md) | Top-priority improvement (lead time), standalone runbook |
+| [`handoff/CHALLENGES.md`](handoff/CHALLENGES.md) | 19 problems faced and solved, written for the thesis |
+| [`handoff/FUTURE_WORK.md`](handoff/FUTURE_WORK.md) | Optional improvements, tiered by value |
+
 ## [`runbooks/`](runbooks/) — things you execute
 
 Follow these top to bottom; they contain copy-pasteable commands.

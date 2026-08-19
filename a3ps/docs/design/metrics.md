@@ -20,6 +20,15 @@ docstrings have more implementation detail if you need it.
 | 6 | Per-stage latency (Table IV) | `scripts/run_pipeline.py` (instrumentation is automatic) | any clip run through the pipeline | `meta.json`'s `per_stage_ms` field |
 | 7 | Hallucination before/after example | `python -m a3ps.explain.llm_client_permissive_test` | `GROQ_API_KEY`, one enriched clip | printed side-by-side narratives |
 | 8 | User study (C3) | *(no script — human participants)* | a scoping decision, see §8 | either real data or an explicit limitation statement |
+| **9** | **Learned risk head (Phase IV): useful-warning rate, cutoff APs, lead time** | `scripts/train_risk_head.py` | extracted `.npz` features | `eval/train_log.txt`, `eval/risk_gru_history.json`, checkpoint |
+| **10** | **Operating point (threshold × confirm trade-off)** | `scripts/sweep_operating_point.py` | a trained checkpoint | `eval/operating_point_sweep.md` |
+
+**⚠️ Metrics 1–8 describe the pre-Phase IV threshold system.** Phase IV replaced
+the hand-set risk formula with a learned temporal head, so §9 and §10 are the
+metrics that describe the *current* system. When quoting any number, say which
+system produced it — and note the two are not measured under identical
+observation conditions (the learned head is scored on 13 s windows at 10 Hz, the
+old system on full clips at 30 Hz).
 
 ---
 
@@ -434,6 +443,75 @@ shortest; eval fixed at 60+60 but *which* negatives can rotate) — and the
 forecast val split changes with the mined pool. Rule: after adding data,
 re-run the full chain (prepare → pipeline/dev → eval) and version the
 outputs; never mix pre- and post-addition numbers in one table.
+
+---
+
+## 9. Learned risk head (Phase IV) — useful-warning rate, cutoff APs, lead time
+
+**File:** `scripts/train_risk_head.py`
+
+```powershell
+python scripts/train_risk_head.py `
+    --features data/features/train_all --val-features data/features/eval `
+    --epochs 30 --patience 8 --batch-size 8 `
+    --out notebooks/models/risk_gru_v1.pt `
+    --history-json eval/risk_gru_history.json *>&1 | Tee-Object eval/train_log.txt
+```
+
+**Parameters that change the reported numbers:**
+- `--kappa` (default 3.0) — sharpness of the anticipation loss's timestep weighting. **This silently sets what lead time the loss asks for**: kappa 3.0 asks for ~0.98 s before impact, kappa 0.5 asks for ~1.60 s. Print it with `expected_lead_time()`. A large kappa turns an anticipation objective into a detection one.
+- `--pre-alert-weight` (default 0.5) — penalty for firing before `alert_time_s`. At 0 the loss cannot distinguish a standing alarm from a well-timed one.
+- `--threshold` (default 0.5) / `--confirm` (default 3) — **evaluation-time only**, do not affect weights. See §10; do not report training's default-threshold numbers as the result.
+- `--patience` (default 4) — early stopping. The best checkpoint is saved the moment it appears, so interrupting never loses it.
+- `--seed` (default 1234) — moves useful-warning by several points at this dataset size. Fix it across any comparison.
+
+**What it computes** (on the frozen 120-clip eval split):
+- **useful-warning rate** — positives alerted inside `[alert_time_s, event_time_s]`, i.e. Nexar's own actionable window. Misses, too-late alarms and alarms fired before there was anything to see all count against it.
+- **n_too_early** — positives alerted before `alert_time_s`, isolated as its own failure mode.
+- **false-alarm rate** — negatives that raised any alert.
+- **mean lead time** — seconds between the alert and the event.
+- **cutoff APs at 500 / 1000 / 1500 ms pre-event** plus their mean — the official-style Nexar anticipation protocol, ranking clips using only the frames available before each cutoff.
+
+**Why these exist:** the useful-warning rate is the honest anticipation metric because it is keyed to the dataset's ground truth rather than a window we chose. The cutoff APs are threshold-free, so they measure the model's discrimination independently of any decision boundary.
+
+**Needs on disk:** extracted `.npz` features (see `docs/handoff/REPRODUCE_BY_HAND.md` §3) and a verified split freeze.
+
+**✅ Expected good outcome:**
+- **False-alarm rate ≤ 0.20 is the gatekeeper.** Check it before anything else; a high useful-warning rate at high FA is not a result.
+- **useful-warning ≥ 0.75** at that FA (committed result: 0.717 — marginally short).
+- **mean lead 2–6 s** (committed result: 1.58 s — short; this is the known gap, and `kappa` is the lever, see `docs/handoff/KAPPA_RETRAIN.md`).
+- **mean AP** — committed 0.693. This is the ceiling no threshold can exceed; raising it needs better features or capacity.
+- Best epoch landing early (ours: 5 of 30) is normal. Validation useful-warning oscillating ±0.2 between epochs is normal at 120 val clips — **judge a run by its best epoch, never its last**.
+
+**⚠️ Model selection currently ignores false-alarm rate.** It maximises useful-warning alone with a strict `>`, so it discarded an epoch with equal useful-warning and *better* FA. Compensate by re-choosing the operating point afterwards (§10).
+
+---
+
+## 10. Operating point — threshold × confirm trade-off
+
+**File:** `scripts/sweep_operating_point.py`
+
+```powershell
+python scripts/sweep_operating_point.py `
+    --checkpoint notebooks/models/risk_gru_v1.pt `
+    --features data/features/eval `
+    --thresholds 0.5,0.6,0.7,0.8,0.9,0.95 --confirms 3,5,8 `
+    --out eval/operating_point_sweep.md
+```
+
+**Why this is separate from training:** `threshold` and `confirm` convert the head's per-frame probability into a discrete alert and **do not affect the weights**. So the entire trade-off curve comes from one forward pass per clip on an existing checkpoint — seconds, versus ~20 minutes per point for a retrain. **Exhaust these before touching anything that requires retraining.**
+
+**What it computes:** useful-warning rate, too-early count, false-alarm rate, mean lead and mean AP at every (threshold, confirm) pair, flagging rows that meet the FA target.
+
+**How to read it:**
+- **`mean AP` is identical in every row.** It ranks clips by peak probability and ignores the threshold, so it is the model's threshold-free discrimination — the ceiling. If it is too low, no operating point will save you.
+- **False-alarm rate is the gatekeeper** (≤ 0.20).
+- **Lead time is the price.** Raising threshold or confirm buys FA back by alerting later. **A row that fixes FA by collapsing lead below ~1 s has solved nothing.**
+- **Pick:** highest useful-warning subject to FA ≤ 0.20 **and** lead ≥ ~1.5 s.
+
+**Committed operating point: threshold 0.70, confirm 5** → useful 0.717, FA 0.167 ✅, lead 1.58 s. Documented alternative **0.60 / confirm 8** → useful 0.750, lead 1.84 s, FA 0.217 (over target, but better detection and lead).
+
+**What this sweep revealed:** premature alarms were a **threshold artefact**, not a loss deficiency — too-early alerts fell 5 → 1 and FA fell 0.583 → 0.167 purely by raising the threshold, with no retraining. A planned `pre_alert_weight` sweep was aimed at an already-solved problem.
 
 ---
 
