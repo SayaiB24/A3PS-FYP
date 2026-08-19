@@ -21,7 +21,7 @@ matters, because several such gaps were found (see §13, Known Issues).
 ### 1.1 Goal
 A3PS ("Agentic Accident Anticipation & Prevention System" — see the dashboard
 title in `dashboard/index.html`, or "Anticipatory Traffic-Safety Pipeline" per
-`README.md`) turns a dashcam video into:
+`../../README.md`) turns a dashcam video into:
 1. An **annotated video** (`annotated.mp4`) with detected/tracked road actors,
    their predicted future paths, and risk-colored overlays.
 2. A **structured JSON file** (`events.json`) — the single canonical record of
@@ -262,7 +262,7 @@ machine-specific (30GB+ full dataset).
 - `data/nexar/index.csv` — generated master index (see §4,
   `scripts/prepare_nexar.py`).
 - `data/dev_clips/` — the 15 shortest dev clips, copied/renamed
-  `dev01.mp4`..`dev15.mp4`, + a `README.md` mapping them back to original ids.
+  `dev01.mp4`..`dev15.mp4`, + a `../../README.md` mapping them back to original ids.
 - `data/trajectories/` — mined `.npz` shards + `stats.json` +
   `windows_preview.png` (see §4, `scripts/mine_trajectories.py`). **On this
   specific checkout, this folder currently only contains `1875.npz` +
@@ -286,7 +286,7 @@ never written back into this file on this machine. See §13.
 by `scripts/eval_forecast.py` and `a3ps/forecasting/seq2seq.py`. **Verified:
 this directory does not exist at all on this checkout** — the trained model
 (best val ADE 51.642, per chat) lives only on the GPU machine where training
-ran, and per `GPU_HANDOFF.md`'s own instructions it should be copied back but
+ran, and per `../runbooks/GPU_HANDOFF.md`'s own instructions it should be copied back but
 apparently has not been (yet) on this machine.
 
 ### `notebooks/`
@@ -927,7 +927,7 @@ active virtual environment (`../.venv` relative to the project root) runs
 development and was deleted at the user's request to avoid confusion — do
 not recreate it. A second, GPU-equipped machine (reported as an RTX 3050
 laptop) was used separately for the real trajectory-mining run and LSTM
-training; its environment setup is documented in `GPU_HANDOFF.md`.
+training; its environment setup is documented in `../runbooks/GPU_HANDOFF.md`.
 
 ---
 
@@ -943,7 +943,7 @@ example command. (`serve_dashboard.py` covered here too for completeness.)
 - **Input:** `data/nexar/videos/*.mp4` (or `--videos` dirs) + any
   `.xlsx`/`.csv`/`.json` label table(s) in `data/nexar/` (or `--annotation`).
 - **Output:** `data/nexar/index.csv`, `data/dev_clips/dev01..15.mp4` +
-  `README.md`.
+  `../../README.md`.
 - **Dependencies:** `openpyxl` (for `.xlsx`), `opencv-python` (for probing
   fps/size/duration).
 - **Example:** `python scripts/prepare_nexar.py --root data/nexar`
@@ -1002,7 +1002,7 @@ example command. (`serve_dashboard.py` covered here too for completeness.)
   kept for reference/regression testing of the schema.
 - **Input:** `--video` (required) + `--out` (required).
 - **Output:** `<out>/raw.mp4`, `<out>/events.json`, `<out>/meta.json`.
-- **Note:** `README.md`'s documented example
+- **Note:** `../../README.md`'s documented example
   (`python scripts/make_fake_events.py --out dashboard/clips/demo/`) is
   **stale/broken** — `--video` is `required=True` in the actual argparse
   definition, so that exact command would fail with a missing-argument
@@ -1057,7 +1057,7 @@ example command. (`serve_dashboard.py` covered here too for completeness.)
 | `tracking_preview.mp4` | `python -m a3ps.tracking.tracker <video>` | project root | Yes |
 | `dashboard/clips/<id>/{raw.mp4, annotated.mp4, events.json, meta.json}` | `run_pipeline.py`, `make_fake_events.py`, `make_demo_clip.py` | `dashboard/clips/` (gitignored) | Yes — `02134`, `02134_pipe`, `demo`, `fake_demo` all present; only `02134_pipe` and `fake_demo` are listed in `manifest.json` (the other two are orphaned/unused leftovers — see §13) |
 | `data/nexar/index.csv` | `prepare_nexar.py` | `data/nexar/` (gitignored) | Not directly re-verified in this session, but referenced/consistent with prior work |
-| `data/dev_clips/dev01..15.mp4` + `README.md` | `prepare_nexar.py` | `data/dev_clips/` (gitignored) | Consistent with prior work; not re-listed in this pass |
+| `data/dev_clips/dev01..15.mp4` + `../../README.md` | `prepare_nexar.py` | `data/dev_clips/` (gitignored) | Consistent with prior work; not re-listed in this pass |
 | `data/trajectories/<clip_id>.npz`, `stats.json`, `windows_preview.png` | `mine_trajectories.py` | `data/trajectories/` (gitignored) | **Only `1875.npz` + `stats.json` present on this checkout** (one clip, from an early smoke test) — the real 93-clip/1725-window run's outputs live only on the separate GPU machine and were not copied back here (verified by directly listing this folder) |
 | `models/seq2seq_v1.pt` | `notebooks/train_forecaster.ipynb` | `models/` (gitignored) | **Not present at all on this checkout** — `models/` directory does not exist here |
 | `eval/forecast_table.md` | `eval_forecast.py` | `eval/` | Present, but content is the **stale tiny 2-window smoke-test result**, not the real 172-window GPU result reported during development (see §13) |
@@ -1069,7 +1069,7 @@ example command. (`serve_dashboard.py` covered here too for completeness.)
 
 This section explains what the project's results *mean*, why they matter,
 and whether they're good — the raw numbers themselves (with full experiment
-context) live in `results.md`; this section is the "so what" companion to
+context) live in `../status/results.md`; this section is the "so what" companion to
 that file, restricted to what's directly relevant to understanding the
 codebase's current state.
 
@@ -1213,7 +1213,7 @@ any specific camera's real mounting angle/height.
 **Trade-off:** shipping in pixel/relative units is simpler and always
 "works" (no calibration needed) but sacrifices real-world interpretability
 (m/s, metres) until a per-clip calibration pass is done (documented in
-`TODO.md` as a "Week 4" task for the final demo clips specifically, not the
+`../status/TODO.md` as a "Week 4" task for the final demo clips specifically, not the
 whole dataset).
 
 ### 12.5 BoT-SORT `track_buffer` raised from 30 → 90 frames
@@ -1338,14 +1338,14 @@ Ranked roughly by how much they'd surprise/block a new contributor.
    `stats.json` exist in `data/trajectories/`; `models/` does not exist at
    all. The real 93-clip / 1,725-window mining result and the trained
    `seq2seq_v1.pt` (best val ADE 51.642, per chat) exist only on the
-   separate GPU machine used for that work, and per `GPU_HANDOFF.md`'s own
+   separate GPU machine used for that work, and per `../runbooks/GPU_HANDOFF.md`'s own
    §12 instructions should have been copied back — that step appears not to
    have completed (or not on this specific machine/checkout).
 
-5. **`TODO.md` and `GPU_HANDOFF.md` are stale relative to actual progress.**
-   `TODO.md` still describes trajectory mining as "NOT done... `train_traj`
+5. **`../status/TODO.md` and `../runbooks/GPU_HANDOFF.md` are stale relative to actual progress.**
+   `../status/TODO.md` still describes trajectory mining as "NOT done... `train_traj`
    is currently empty" and cites "8 tests" for mining (the real, current
-   count is 11 — verified). `GPU_HANDOFF.md` still says mining "was
+   count is 11 — verified). `../runbooks/GPU_HANDOFF.md` still says mining "was
    interrupted here at 1/20 clips" and doesn't mention the `track_buffer`
    fix, the `--conf` override, or the resume-support work — all of which
    happened *after* that file was written and were never folded back in.
@@ -1372,7 +1372,7 @@ Ranked roughly by how much they'd surprise/block a new contributor.
    Kalman hook, `meta.json`/`events.json`'s `meta.config.forecaster` field
    would still incorrectly report `"kalman_cv"`.
 
-9. **`README.md`'s documented `make_fake_events.py` example command is
+9. **`../../README.md`'s documented `make_fake_events.py` example command is
    broken as written.** `python scripts/make_fake_events.py --out
    dashboard/clips/demo/` omits the required `--video` argument
    (`required=True` in the actual `argparse` definition, verified) — running
@@ -1463,7 +1463,7 @@ Ranked roughly by how much they'd surprise/block a new contributor.
 
 ### Accuracy
 - Calibrate the BEV ground plane per-clip (already planned as a "Week 4"
-  task in `TODO.md`) for the small number of final demo clips, to get real
+  task in `../status/TODO.md`) for the small number of final demo clips, to get real
   metric units (m/s) instead of relative pixels for the presentation/demo.
 - Re-mine trajectories in BEV space (`forecast_space: bev`) once calibrated,
   if metric-space LSTM training becomes worthwhile.
@@ -1503,7 +1503,7 @@ Ranked roughly by how much they'd surprise/block a new contributor.
 - Add tests for `DecisionEngine`, `templates.explain`, and (once wired)
   `Pipeline` end-to-end — currently the least-tested parts of the codebase
   are exactly the parts the next phase of work will build directly on top of.
-- Periodically re-sync `TODO.md`/`GPU_HANDOFF.md` with actual progress, or
+- Periodically re-sync `../status/TODO.md`/`../runbooks/GPU_HANDOFF.md` with actual progress, or
   retire them in favor of a single living status document, to avoid the
   drift documented in §13, item 5.
 

@@ -211,7 +211,7 @@ python scripts\prepare_nexar.py --root data\nexar
 This is fast (just probes video metadata, no inference) — seconds even for
 thousands of clips. It (re)writes:
 - `data\nexar\index.csv` — master table: `clip_id, path, label, split, event_time_s, alert_time_s, duration_s, fps, width, height`
-- `data\dev_clips\dev01.mp4 .. devNN.mp4` (+ README.md)
+- `data\dev_clips\dev01.mp4 .. devNN.mp4` (+ ../../README.md)
 
 Splits: `dev` = 10 neg + 5 pos (shortest), `eval` = 60 neg + 60 pos, everything
 else negative → `train_traj`. More data in step 4 means a bigger `train_traj`
@@ -275,7 +275,7 @@ What to check when it finishes:
 
 Currently mines in **image pixels** (`forecast_space: img` in
 `configs/default.yaml`), not BEV metres — that's an intentional decision
-until per-clip BEV calibration happens (step 12 / `TODO.md` "Week 4"
+until per-clip BEV calibration happens (step 12 / `../status/TODO.md` "Week 4"
 section). Do not switch this to `bev` for now.
 
 ---

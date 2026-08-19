@@ -4,7 +4,7 @@
 
 `data/nexar/index.csv` is gitignored (it lives under `data/`), and the two
 laptops do **not** have the same one. The GPU laptop was given extra negative
-clips (GPU_HANDOFF.md §4) and `prepare_nexar.py` was re-run there, so its
+clips (`../docs/runbooks/GPU_HANDOFF.md` §4) and `prepare_nexar.py` was re-run there, so its
 eval split contains ~46 clips that do not exist in this laptop's index at all.
 
 `eval/anticipation.md` and the cached per-clip output under `eval/anticipation/`

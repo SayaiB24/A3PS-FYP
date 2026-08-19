@@ -299,7 +299,7 @@ the project constraint was zero paid API usage.
 **Q: The `.env` file / model weights / data aren't in git — where are they?**
 A: Deliberately gitignored: secrets (`.env` with `GROQ_API_KEY`), bulk video
 data (`data/nexar/videos/`), and large artifacts move by hand between the
-CPU and GPU laptops. `GPU_HANDOFF.md` documents exactly what to copy each
+CPU and GPU laptops. `../runbooks/GPU_HANDOFF.md` documents exactly what to copy each
 direction. Code moves only via git.
 
 **Q: How do I trust all this still works after a change?**

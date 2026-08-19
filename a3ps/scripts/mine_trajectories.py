@@ -360,7 +360,8 @@ def main():
           + ("  (overridden)" if args.conf is not None else ""))
     if not rows:
         print(f"No '{args.split}' clips found. Populate data/nexar/ and run "
-              "scripts/prepare_nexar.py (see TODO.md). Nothing to mine.")
+              "scripts/prepare_nexar.py (see docs/status/TODO.md). "
+              "Nothing to mine.")
 
     os.makedirs(args.out, exist_ok=True)
     stats_path = os.path.join(args.out, "stats.json")

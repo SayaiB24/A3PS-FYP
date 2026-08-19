@@ -3,7 +3,8 @@
 build_per_stage_ms() is a pure function of the accumulated timings dict, so
 it's tested directly here without needing a real video/YOLO model (that full
 path is verified by manually re-running scripts/run_pipeline.py on real dev
-clips and checking meta.json -- see GPU_HANDOFF.md / metrics.md).
+clips and checking meta.json -- see docs/runbooks/GPU_HANDOFF.md /
+docs/design/metrics.md).
 """
 
 import os

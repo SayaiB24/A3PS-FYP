@@ -41,9 +41,28 @@ python scripts/serve_dashboard.py
 - `a3ps/risk/` — Gaussian trajectories, collision probability, decision rules
 - `a3ps/explain/` — deterministic templates + optional LLM enrichment
 - `a3ps/pipeline.py` — orchestrator
+- `a3ps/features/` — per-frame feature extraction + ego motion (Phase IV)
 - `dashboard/` — static player with canvas overlay + agent console
 - `scripts/` — CLI entry points and evaluation
 - `tests/` — unit tests for schema, geometry, and risk math
+- `docs/` — documentation, grouped by use (see below)
+- `eval/` — generated evaluation output (written by scripts, not hand-edited)
+
+## Documentation
+
+See [`docs/`](docs/README.md) for the full index. In short:
+
+- [`docs/runbooks/`](docs/runbooks/) — things you execute.
+  [`execution.md`](docs/runbooks/execution.md) is the place to start;
+  [`GPU_HANDOFF.md`](docs/runbooks/GPU_HANDOFF.md) covers the two-laptop
+  workflow and [`GPU_PHASE4.md`](docs/runbooks/GPU_PHASE4.md) the current phase.
+- [`docs/design/`](docs/design/) — how it works:
+  [`logic_pipeline.md`](docs/design/logic_pipeline.md),
+  [`metrics.md`](docs/design/metrics.md),
+  [`explanation.md`](docs/design/explanation.md),
+  [`QnA.md`](docs/design/QnA.md).
+- [`docs/status/`](docs/status/) — [`results.md`](docs/status/results.md) and
+  [`TODO.md`](docs/status/TODO.md).
 
 ## Config
 

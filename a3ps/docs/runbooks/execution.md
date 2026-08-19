@@ -6,10 +6,10 @@ running, all evaluation numbers generated, and the dashboard demo working.
 No prior knowledge of the project is assumed.
 
 Companion docs:
-- **`logic_pipeline.md`** — *how* each file works and why (read after this).
-- **`metrics.md`** — deep reference for every metric/eval script.
+- **`../design/logic_pipeline.md`** — *how* each file works and why (read after this).
+- **`../design/metrics.md`** — deep reference for every metric/eval script.
 - **`GPU_HANDOFF.md`** — the two-laptop (CPU dev / GPU run) workflow specifics.
-- **`QnA.md`** — answers to every tricky question about the implementation.
+- **`../design/QnA.md`** — answers to every tricky question about the implementation.
 
 ---
 
@@ -141,7 +141,7 @@ python scripts\prepare_nexar.py --root data\nexar
 Fast (seconds — only probes video metadata). Produces:
 - `data/nexar/index.csv` — the master table every other script reads:
   `clip_id, path, label, split, event_time_s, alert_time_s, duration_s, fps, width, height`
-- `data/dev_clips/dev01.mp4 … dev15.mp4` + `README.md` — the 15 shortest
+- `data/dev_clips/dev01.mp4 … dev15.mp4` + `../../README.md` — the 15 shortest
   clips (10 neg + 5 pos) copied out and renamed for daily development. The
   README holds the `devNN ↔ original clip_id` mapping — you will need it.
 
@@ -228,7 +228,7 @@ Copy-Item notebooks\models\seq2seq_v1.pt notebooks\models\seq2seq_prev.pt
 
 ## 10. Run the evaluations
 
-Full details for every metric are in **`metrics.md`** — this is the short
+Full details for every metric are in **`../design/metrics.md`** — this is the short
 version, in the recommended order.
 
 **(a) Forecast accuracy (ADE/FDE, Kalman vs LSTM):**
@@ -341,7 +341,7 @@ only: pick 4 road points + real-world distances, save
 | ~1000 ms/frame inference | running on CPU | same as above |
 | "No processed clips found" from eval | clip-id vs devNN folder-name mismatch | create the junctions (step 10b note) |
 | Seq2Seq row missing from forecast table | `--weights` not passed | pass `--weights notebooks\models\seq2seq_v1.pt` |
-| eval numbers differ from an older run | mined pool changed → different val split | only compare within one run (see `metrics.md` §1) |
+| eval numbers differ from an older run | mined pool changed → different val split | only compare within one run (see `../design/metrics.md` §1) |
 | `pytest` failures on a fresh clone | broken env, not code | recreate the venv, reinstall requirements |
 | mining seems to redo some clips | zero-window clips write no shard | harmless; they re-track each run |
 | dashboard shows no events | clips processed before risk engine was wired, or negative clip | re-run step 6; pick a positive clip |

@@ -2,7 +2,7 @@
 
 Two halves: **everything implemented so far** (the record), then **future
 scope** (what's left, what's next, what could come after). For how to run
-any of it: `execution.md`. For how it works: `logic_pipeline.md`.
+any of it: `../runbooks/execution.md`. For how it works: `../design/logic_pipeline.md`.
 
 ---
 
@@ -83,11 +83,11 @@ any of it: `execution.md`. For how it works: `logic_pipeline.md`.
       with the full risk engine and committed.
 
 ### Documentation & quality
-- [x] `execution.md` (from-scratch run guide), `logic_pipeline.md` (+ PDF),
-      `metrics.md` (per-metric commands/reasoning/execution order),
-      `QnA.md` (tricky-part Q&A), `GPU_HANDOFF.md` (kept current, incl.
+- [x] `../runbooks/execution.md` (from-scratch run guide), `../design/logic_pipeline.md` (+ PDF),
+      `../design/metrics.md` (per-metric commands/reasoning/execution order),
+      `../design/QnA.md` (tricky-part Q&A), `../runbooks/GPU_HANDOFF.md` (kept current, incl.
       §9.1 VIRTUAL_BRAKE math and §10 matched-subset guidance), `results.md`
-      + `explanation.md` updated for the retrained-LSTM outcome.
+      + `../design/explanation.md` updated for the retrained-LSTM outcome.
 - [x] Test suite: **90 passing** (schema, geometry, collision, decision incl.
       new toggles, tracking buffer, forecasting, mining, eval metrics incl.
       sweep + matched-subset, qual-figure logic, pipeline latency, LLM

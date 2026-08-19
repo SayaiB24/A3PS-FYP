@@ -4,7 +4,7 @@ The *why and how* of every file that matters to execution, followed by the
 end-to-end flow of the whole project including every change made in the
 latest round of work (no-render mode, per-stage latency, ablation switches,
 reactive baseline, matched-subset mTTA, threshold sweep, qualitative figure,
-permissive-prompt test). Companion to `execution.md` (how to run) and
+permissive-prompt test). Companion to `../runbooks/execution.md` (how to run) and
 `metrics.md` (metric details).
 
 ---
