@@ -1,8 +1,60 @@
-# a3ps — TODO (regenerated 2026-07-14)
+# a3ps — TODO
 
 Two halves: **everything implemented so far** (the record), then **future
 scope** (what's left, what's next, what could come after). For how to run
 any of it: `../runbooks/execution.md`. For how it works: `../design/logic_pipeline.md`.
+
+> **⚠️ Part A below was written 2026-07-14, before the Phase IV pivot.** It is
+> still an accurate record of Phases I–III, but where it says "Phase 4 — Risk +
+> Decision" it means the **old hand-tuned threshold system**. That has been
+> superseded by a learned temporal head. Part B has been rewritten for the
+> current state.
+
+---
+
+## Status at a glance (2026-08-19)
+
+**Where the project is:** the learned risk head is trained, evaluated on the
+frozen held-out split, has a committed operating point, and the dashboard shows
+it against the old system. Full reproduction steps:
+[`../handoff/REPRODUCE_BY_HAND.md`](../handoff/REPRODUCE_BY_HAND.md).
+
+| quantity | value | vs target |
+|---|---|---|
+| checkpoint | `notebooks/models/risk_gru_v1.pt` (34,465 params, best epoch 5) | — |
+| operating point | threshold 0.70, confirm 5 | — |
+| false-alarm rate | **0.167** | ✅ ≤ 0.20 |
+| useful-warning rate | 0.717 (43/60) | marginally short of 0.75 |
+| mean lead time | 1.58 s | ✗ short of 2–6 s — **the open gap** |
+| mean AP | 0.693 (0.795 / 0.708 / 0.575 @ 500/1000/1500 ms) | ceiling; threshold cannot raise it |
+| tests | 164 passing | — |
+
+### ✅ Done since the pivot
+
+- [x] **Split freeze** (`eval/split_freeze.json`, `a3ps/common/splits.py`) — dev/eval membership pinned; `prepare_nexar.py` and `eval_anticipation.py` refuse to run on a drifted split.
+- [x] **Full dataset indexed** — 1,500 labelled clips (685 pos / 680 neg train, 60+60 frozen eval, 5+10 dev). Positives went 65 → 685. The 1,344 `test/` clips are unlabelled (Kaggle holdout) and correctly excluded.
+- [x] **Feature extraction** — 1,485 clips at 10 Hz over 13 s windows, 112-dim, 0 failures, `has_ego=True` on every clip (first time the model has had real ego motion). Rate fixed at 10 Hz everywhere: mixing rates changes feature noise, since the central-difference span is `2/rate`.
+- [x] **Learned risk head trained** (`a3ps/risk/temporal.py`, `scripts/train_risk_head.py`) with an `alert_time_s`-keyed anticipation loss.
+- [x] **Checkpoint-on-improvement + early stopping** — runs are safe to interrupt (an 85-min run lost its best model before this).
+- [x] **Operating-point sweep** (`scripts/sweep_operating_point.py`) — threshold/confirm are eval-time only, so the whole trade-off curve costs one forward pass per clip rather than a retrain per point.
+- [x] **AP tie-order bug fixed** — the old 0.978 was an artefact of CSV row order (0.371 with the same scores reversed); corrected mean AP 0.546.
+- [x] **`useful_warning_rate` re-keyed** to Nexar's own `alert_time_s`, replacing an invented 0.5–6.0 s window; `n_too_early` exposed as its own failure mode.
+- [x] **Official-style Nexar cutoff APs** at 500 / 1000 / 1500 ms.
+- [x] **Dashboard** — learned head vs old threshold system on the same clip, ground-truth markers, verdicts, explanation on intervention, slim overlays (0.1–2.4 MB vs 20–50 MB), grouped dropdown, correct threshold readout, self-explaining failure states.
+- [x] **Handoff docs** — [`../handoff/`](../handoff/): reproduce-by-hand, next steps, kappa runbook, 19 challenges, future work; plus `metrics.md` §9–10 and a quick start in `execution.md`.
+
+### ⬜ Remaining — see [`../handoff/NEXT_STEPS.md`](../handoff/NEXT_STEPS.md)
+
+1. **Kappa retrain** ⭐ — lead time is the only missed target; `kappa=3.0` asks the loss for a warning only ~0.98 s before impact, so it trained a detector rather than an anticipator. ~1 h, CPU, no re-extraction. Runbook: [`../handoff/KAPPA_RETRAIN.md`](../handoff/KAPPA_RETRAIN.md).
+2. **Regenerate the paper tables** — `eval/anticipation.md` and the paper artefacts still describe the old threshold system.
+3. **Write the numbers up honestly** — quote 0.717 @ FA 0.167, not the 0.833 that was measured at an unusable FA 0.583; state that lead time misses target.
+4. **Two known issues, deliberately unfixed** — `--batch-size` does not batch the compute (~5× speedup available, needs loss masking and verification); model selection ignores false-alarm rate.
+5. **Optional** — see [`../handoff/FUTURE_WORK.md`](../handoff/FUTURE_WORK.md).
+
+**Two caveats for the writeup:** the learned head is scored on 13 s windows at
+10 Hz while the old system was scored on full clips at 30 Hz — not identical
+observation conditions. And mean AP 0.693 is a ceiling no operating point can
+exceed; raising it needs better features or capacity.
 
 ---
 
@@ -23,7 +75,9 @@ any of it: `../runbooks/execution.md`. For how it works: `../design/logic_pipeli
       289-window val split the LSTM beats Kalman at 4 s (ADE 56.33 vs 61.27,
       FDE 99.74 vs 122.55); both checkpoints kept (`seq2seq_v1.pt`,
       `seq2seq_prev.pt`) with both result tables archived.
-- [x] **Phase 4 — Risk + Decision** (`a3ps/risk/`): sigma-point collision
+- [x] **Phase 4 — Risk + Decision** (`a3ps/risk/`) — **⚠️ SUPERSEDED by the
+      learned head; retained as a feature source and as the before/after
+      baseline in the dashboard.** Sigma-point collision
       probability vs actor-radius-dilated ego corridor; per-trajectory
       max_prob + ttc_s; cross-frame EMA (`RiskSmoother`); `DecisionEngine`
       with context-lowered thresholds (floor 0.45), 3-frame confirmation,
@@ -82,6 +136,39 @@ any of it: `../runbooks/execution.md`. For how it works: `../design/logic_pipeli
       ▼ A3PS vs ▽ reactive-ADAS gap markers). All 15 dev clips processed
       with the full risk engine and committed.
 
+### Phase IV — learned temporal risk head (added 2026-08-19)
+
+Phases I–III above are retained as **feature extractors**; the hand-tuned
+threshold risk formula is replaced by a learned discriminator. The motivating
+correction: Nexar labels **both collisions and near-misses as positive**, so the
+task is *risky-event vs ordinary-driving*, not *hit vs near-miss* — and no single
+hand-set threshold on one geometric feature separates those, which is why the
+field learns it. See [`../handoff/CHALLENGES.md`](../handoff/CHALLENGES.md) §6.
+
+- [x] **Split freeze** (`a3ps/common/splits.py`, `scripts/freeze_split.py`) —
+      dev/eval membership pinned outside gitignored `data/`; new clips may only
+      join `train_traj`; new positives are left unassigned rather than
+      auto-placed. Both `prepare_nexar.py` and `eval_anticipation.py` refuse to
+      run on a drifted split.
+- [x] **Feature extraction** (`a3ps/features/`, `scripts/extract_features.py`) —
+      112-dim per-frame vectors: kinematics, bbox growth, looming TTC, corridor
+      distance, the Phase III collision probability, class one-hot, and
+      ego motion from detection-masked sparse optical flow (`ego.py`).
+- [x] **Anticipation loss** (`a3ps/risk/anticipation_loss.py`) — timestep
+      weighting keyed to `alert_time_s`, sharpness `kappa`, `pre_alert_weight`
+      penalty for firing before anything is visible, and
+      `expected_lead_time()` to report what lead the loss is actually asking for.
+- [x] **Temporal head** (`a3ps/risk/temporal.py`) — causal GRU (hidden 64,
+      1 layer, 34,465 params) with a runtime causality assertion.
+- [x] **Training + selection** (`scripts/train_risk_head.py`) —
+      checkpoint-on-improvement, early stopping, leakage guard.
+- [x] **Operating-point sweep** (`scripts/sweep_operating_point.py`).
+- [x] **Dashboard comparison** (`scripts/build_dashboard_demo.py`) — both
+      systems' curves on the same clip from cached artefacts, no GPU.
+- [x] **Association-rate check** (`scripts/check_assoc_rate.py`) — reports
+      absolute forecastable tracks per clip, not the ratio that misleadingly
+      improves as the frame rate drops.
+
 ### Documentation & quality
 - [x] `../runbooks/execution.md` (from-scratch run guide), `../design/logic_pipeline.md` (+ PDF),
       `../design/metrics.md` (per-metric commands/reasoning/execution order),
@@ -97,31 +184,30 @@ any of it: `../runbooks/execution.md`. For how it works: `../design/logic_pipeli
 
 ## Part B — Future scope & future implementation
 
-### B1. Immediate next runs (blocked only on GPU time, no new code)
-- [ ] Finish `eval_anticipation.py --run` over the full 120-clip eval split;
-      read the **matched-subset mTTA** and, if it's negative (A3PS later
-      than the naive baseline, as seen on the tiny dev sample), tune
-      `base_threshold` / `horizon_s` / `frames_to_confirm` and re-run until
-      the operating point is defensible.
-- [ ] `--sweep` on the cached eval results → PR curve for the paper.
-- [ ] `run_ablations.py` overnight → Table II.
-- [ ] 3+ clips re-run through `run_pipeline.py` **on the GPU laptop** so
-      Table IV latency reflects GPU (CPU numbers are ~20-40x slower and must
-      be labeled if used).
-- [ ] Groq enrichment on 2-3 clips + the permissive-prompt before/after pair
-      for Section VII.B.
-- [ ] Decide (with supervisor) on the user study (Section VII.C): run a
-      15-25-person Likert study, or state the limitation explicitly.
-- [ ] Final `collect_paper_stats.py` pass; paste into the paper.
+> **B1 and B2 as originally written are superseded.** They planned to tune the
+> old threshold system's `base_threshold` / `horizon_s` / `frames_to_confirm`
+> until its operating point became defensible. The Phase IV pivot replaced that
+> system with a learned head, so those runs no longer describe the work. The
+> current plan is in [`../handoff/NEXT_STEPS.md`](../handoff/NEXT_STEPS.md);
+> B3–B5 below still stand as longer-range ideas and overlap with
+> [`../handoff/FUTURE_WORK.md`](../handoff/FUTURE_WORK.md), which has costs and
+> risks attached.
 
-### B2. Week-4 planned work
-- [ ] **Per-clip BEV calibration** for the ~5 final demo clips
-      (`ground.yaml` per clip, `forecast_space: bev`, `verify_bev.py`
-      check: 5-20 m/s velocities, ≥80% predictions in frame).
-- [ ] Re-mine trajectories in BEV metres after calibration if the LSTM is to
-      train in metric space (current mining is image-pixel space).
-- [ ] Pick + polish the 5 demo clips (manifest, optional `context.json` for
-      a THRESHOLD_LOWERED demo, one hero clip for the qualitative figure).
+### B1. Immediate next work (current)
+
+Summarised in "Status at a glance" above; full detail in the handoff docs.
+
+- [ ] **Kappa retrain** to fix lead time — [`../handoff/KAPPA_RETRAIN.md`](../handoff/KAPPA_RETRAIN.md).
+- [ ] **Regenerate the paper tables** against the learned head (`eval_anticipation.py`, then `collect_paper_stats.py`).
+- [ ] **Groq enrichment** on 2–3 clips + the permissive-prompt before/after pair for Section VII.B. *(Still valid — the explanation layer is unchanged by the pivot.)*
+- [ ] **Decide on the user study** (Section VII.C): run a 15–25-person Likert study, or state the limitation explicitly. *(Still valid; see `../design/metrics.md` §8.)*
+
+### B2. Superseded / deferred
+
+- [x] ~~Tune the old threshold system to a defensible operating point~~ — superseded: the learned head now provides the operating point (0.70/5, FA 0.167).
+- [ ] **Per-clip BEV calibration** for the final demo clips (`ground.yaml`, `forecast_space: bev`, `verify_bev.py`). Still worthwhile for interpretability — it makes distances metric instead of pixel stand-ins — but it affects no headline metric. Deferred, listed in `../handoff/FUTURE_WORK.md`.
+- [ ] Re-mine trajectories in BEV metres if the LSTM is ever to train in metric space. Only relevant to the Phase III forecaster, which the learned head now consumes as a feature rather than depending on directly.
+- [x] ~~Pick + polish demo clips~~ — done: 6 Phase IV comparison clips (621, 488, 1004, 690, 1085, 1261) built by `scripts/build_dashboard_demo.py`, chosen for the sharpest old-vs-new contrast.
 
 ### B3. Model & algorithm improvements (post-deadline candidates)
 - [ ] **Grow the mined set to the original 10k+ window target** and retrain

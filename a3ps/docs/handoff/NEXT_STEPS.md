@@ -18,6 +18,27 @@ system. Reproduce any of it from
 | mean lead | 1.58 s (target 2–6 s — **the gap**) |
 | mean AP | 0.693 (0.795 / 0.708 / 0.575 @ 500/1000/1500 ms) |
 
+## What is already done
+
+Nothing below needs redoing. Listed so you can tell at a glance what is settled
+and what is not; the per-item detail is in
+[`../status/TODO.md`](../status/TODO.md).
+
+| area | state |
+|---|---|
+| Split freeze + drift guards | ✅ done — `eval/split_freeze.json`, 135 clips pinned |
+| Dataset indexed (1,500 labelled clips) | ✅ done — 685 pos / 680 neg train, 60+60 frozen eval |
+| Feature extraction (the only GPU step) | ✅ done — 1,485 clips, 10 Hz, 0 failures, ego motion on all |
+| Learned head trained + checkpointed | ✅ done — 34,465 params, best epoch 5 |
+| Operating point chosen | ✅ done — 0.70/5, FA target met |
+| Metric bugs fixed (AP ties, invented window) | ✅ done — corrected mean AP 0.546; keyed to `alert_time_s` |
+| Nexar cutoff APs (500/1000/1500 ms) | ✅ done |
+| Dashboard old-vs-new comparison | ✅ done — 6 demo clips, overlays, grouped dropdown |
+| Handoff documentation | ✅ done — this folder |
+| **Lead time ≥ 2 s** | ⬜ **open — step 1 below** |
+| Paper tables against the learned head | ⬜ open — step 2 |
+| Batched training / FA-aware selection | ⬜ open — step 4, deliberately deferred |
+
 ---
 
 ## 1. Kappa retrain — fix lead time  ⭐ top priority
