@@ -81,6 +81,10 @@
     </div>
   </footer>
 
-  <script src="app.js"></script>
+  <!-- ?v= is a cache buster. Browsers cache app.js aggressively, and the clip
+       manifest gained a grouped {clips:[...]} shape that the previous app.js
+       could not read -- a stale cached script produced an empty dropdown and a
+       blank page with no error. BUMP THIS whenever app.js changes shape. -->
+  <script src="app.js?v=2"></script>
 </body>
 </html>

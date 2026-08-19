@@ -200,3 +200,26 @@ main {
   border-radius: 4px; padding: .4rem .5rem;
 }
 .cmp-expl-text.muted { color: var(--muted); border-left-color: var(--border); }
+
+/* Diagnostic message over the video stage: shown when the manifest is empty or
+   a clip's video file is missing, so neither failure is a silent blank box. */
+.stage-msg {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: .4rem;
+  padding: 1.5rem; text-align: center;
+  background: rgba(14, 17, 22, 0.92); color: var(--text);
+  font-size: .82rem; line-height: 1.5;
+}
+.stage-msg.hidden { display: none; }
+.stage-msg strong { color: var(--caution); font-size: .92rem; }
+.stage-msg p { margin: 0; color: var(--muted); max-width: 46ch; }
+.stage-msg pre {
+  margin: .3rem 0 0; padding: .45rem .6rem; max-width: 100%; overflow-x: auto;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--accent); font-size: .74rem;
+}
+.stage-msg kbd {
+  padding: .05rem .3rem; border: 1px solid var(--border); border-radius: 3px;
+  background: var(--panel2); font-size: .72rem; font-family: ui-monospace, monospace;
+}
+.stage-msg code { color: var(--accent); font-family: ui-monospace, monospace; }

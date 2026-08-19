@@ -119,11 +119,32 @@ function computeReactiveMarkers() {
 // data loading
 // ---------------------------------------------------------------------------
 
+function showStageMessage(html) {
+  let el = document.getElementById("stage-msg");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "stage-msg";
+    el.className = "stage-msg";
+    els.stage.appendChild(el);
+  }
+  el.innerHTML = html;
+  el.classList.remove("hidden");
+}
+
+function hideStageMessage() {
+  const el = document.getElementById("stage-msg");
+  if (el) el.classList.add("hidden");
+}
+
 async function loadManifest() {
   let raw = [];
+  let fetchFailed = false;
   try {
     raw = await (await fetch("clips/manifest.json", { cache: "no-store" })).json();
-  } catch (e) { console.error("manifest load failed", e); }
+  } catch (e) {
+    console.error("manifest load failed", e);
+    fetchFailed = true;
+  }
 
   // Two accepted shapes: the grouped/labelled form written by
   // scripts/update_manifest.py ({clips:[{id,group,label}]}), and a plain array
@@ -148,7 +169,27 @@ async function loadManifest() {
     o.textContent = c.label || c.id;
     target.appendChild(o);
   });
-  if (clips.length) loadClip(clips[0].id);
+
+  if (clips.length) {
+    hideStageMessage();
+    loadClip(clips[0].id);
+    return;
+  }
+
+  // Never fail silently: a blank stage with an empty dropdown is impossible to
+  // diagnose from the UI, so say what went wrong and what to do about it.
+  showStageMessage(
+    fetchFailed
+      ? `<strong>Could not load clips/manifest.json</strong>
+         <p>Is the server running from the repo root?</p>
+         <pre>python scripts/serve_dashboard.py --port 8000</pre>`
+      : `<strong>No clips listed in the manifest</strong>
+         <p>If the manifest file looks fine, your browser is probably running a
+         cached copy of <code>app.js</code> — hard-refresh with
+         <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>.</p>
+         <p>Otherwise rebuild it:</p>
+         <pre>python scripts/update_manifest.py --require-video</pre>`
+  );
 }
 
 async function loadClip(id) {
@@ -200,8 +241,26 @@ async function loadClip(id) {
 
   renderCompare();
   initEventLog();
-  els.video.src = `clips/${id}/raw.mp4`;
-  els.video.load();
+
+  // Demo raw.mp4 files are gitignored (~23 MB each), so after a fresh clone the
+  // curves and verdicts are present but the video is not. Say so instead of
+  // showing a black rectangle.
+  hideStageMessage();
+  try {
+    const head = await fetch(`clips/${id}/raw.mp4`, { method: "HEAD" });
+    if (!head.ok) throw new Error(String(head.status));
+    els.video.src = `clips/${id}/raw.mp4`;
+    els.video.load();
+  } catch (e) {
+    els.video.removeAttribute("src");
+    els.video.load();
+    showStageMessage(
+      `<strong>No video for clip ${id}</strong>
+       <p>Risk curves and verdicts below are still valid — only the video file is
+       missing. Demo videos are gitignored, so recreate them with:</p>
+       <pre>python scripts/build_dashboard_demo.py --clips auto --n 6</pre>`
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
