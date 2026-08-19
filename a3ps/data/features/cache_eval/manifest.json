@@ -1,0 +1,12 @@
+{
+  "index": "eval/nexar_index_gpu.csv",
+  "split": "eval",
+  "window_s": 13.0,
+  "tail_s": 1.0,
+  "rate_hz": 10.0,
+  "source": "cache",
+  "schema_version": 1,
+  "feature_dim": 112,
+  "n_written": 120,
+  "n_failed": 0
+}
