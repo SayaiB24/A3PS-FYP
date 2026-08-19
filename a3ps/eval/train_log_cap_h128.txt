@@ -1,0 +1,41 @@
+train 1365 clips (685 pos) | val 120 clips (60 pos)
+feature width 112
+RiskGRU hidden=128 layers=2 params=192,353 (causality check passed)
+loss: kappa=1.0 pre_alert_weight=0.5 -> asks for a warning ~1.46s before impact on a mean-lead clip
+
+epoch   1  loss 0.7123  val useful 0.233 (14/60, 45 early)  mAP 0.696  FA 0.800  lead 5.04s  <- best
+           saved best (epoch 1) -> notebooks/models/risk_gru_cap_h128.pt
+epoch   2  loss 0.5451  val useful 0.283 (17/60, 43 early)  mAP 0.650  FA 0.883  lead 4.60s  <- best
+           saved best (epoch 2) -> notebooks/models/risk_gru_cap_h128.pt
+epoch   3  loss 0.4753  val useful 0.450 (27/60, 32 early)  mAP 0.733  FA 0.867  lead 3.82s  <- best
+           saved best (epoch 3) -> notebooks/models/risk_gru_cap_h128.pt
+epoch   4  loss 0.4592  val useful 0.667 (40/60, 20 early)  mAP 0.677  FA 0.800  lead 2.87s  <- best
+           saved best (epoch 4) -> notebooks/models/risk_gru_cap_h128.pt
+epoch   5  loss 0.4499  val useful 0.433 (26/60, 34 early)  mAP 0.722  FA 0.733  lead 3.74s
+epoch   6  loss 0.4212  val useful 0.450 (27/60, 33 early)  mAP 0.743  FA 0.733  lead 3.61s
+epoch   7  loss 0.4208  val useful 0.750 (45/60, 13 early)  mAP 0.722  FA 0.650  lead 2.68s  <- best
+           saved best (epoch 7) -> notebooks/models/risk_gru_cap_h128.pt
+epoch   8  loss 0.4002  val useful 0.767 (46/60, 10 early)  mAP 0.729  FA 0.500  lead 2.34s  <- best
+           saved best (epoch 8) -> notebooks/models/risk_gru_cap_h128.pt
+epoch   9  loss 0.3838  val useful 0.733 (44/60, 15 early)  mAP 0.707  FA 0.650  lead 2.69s
+epoch  10  loss 0.3815  val useful 0.600 (36/60, 24 early)  mAP 0.736  FA 0.817  lead 3.17s
+epoch  11  loss 0.3801  val useful 0.683 (41/60, 18 early)  mAP 0.684  FA 0.733  lead 2.76s
+epoch  12  loss 0.3677  val useful 0.783 (47/60, 10 early)  mAP 0.663  FA 0.800  lead 2.72s  <- best
+           saved best (epoch 12) -> notebooks/models/risk_gru_cap_h128.pt
+epoch  13  loss 0.3629  val useful 0.717 (43/60, 17 early)  mAP 0.717  FA 0.750  lead 2.78s
+epoch  14  loss 0.3488  val useful 0.617 (37/60, 23 early)  mAP 0.713  FA 0.717  lead 3.15s
+epoch  15  loss 0.3505  val useful 0.683 (41/60, 19 early)  mAP 0.681  FA 0.867  lead 2.90s
+epoch  16  loss 0.3267  val useful 0.517 (31/60, 29 early)  mAP 0.693  FA 0.917  lead 3.54s
+epoch  17  loss 0.3446  val useful 0.800 (48/60, 5 early)  mAP 0.650  FA 0.350  lead 1.91s  <- best
+           saved best (epoch 17) -> notebooks/models/risk_gru_cap_h128.pt
+epoch  18  loss 0.3338  val useful 0.750 (45/60, 15 early)  mAP 0.675  FA 0.867  lead 2.69s
+epoch  19  loss 0.3241  val useful 0.833 (50/60, 5 early)  mAP 0.652  FA 0.533  lead 2.19s  <- best
+           saved best (epoch 19) -> notebooks/models/risk_gru_cap_h128.pt
+epoch  20  loss 0.3115  val useful 0.700 (42/60, 17 early)  mAP 0.700  FA 0.800  lead 2.82s
+epoch  21  loss 0.3073  val useful 0.850 (51/60, 5 early)  mAP 0.702  FA 0.400  lead 2.11s  <- best
+           saved best (epoch 21) -> notebooks/models/risk_gru_cap_h128.pt
+epoch  22  loss 0.2989  val useful 0.717 (43/60, 16 early)  mAP 0.649  FA 0.733  lead 2.90s
+epoch  23  loss 0.2883  val useful 0.650 (39/60, 21 early)  mAP 0.680  FA 0.900  lead 3.20s
+epoch  24  loss 0.2755  val useful 0.800 (48/60, 11 early)  mAP 0.614  FA 0.700  lead 2.41s
+epoch  25  loss 0.2670  val useful 0.600 (36/60, 23 early)  mAP 0.701  FA 0.617  lead 3.08s
+epoch  26  loss 0.2536  val useful 0.783 (47/60, 9 early)  mAP 0.630  FA 0.683  lead 2.46s
