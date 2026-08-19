@@ -166,6 +166,37 @@ def _fmt(x, nd=3):
 # training
 # ---------------------------------------------------------------------------
 
+def batched_logits(model, batch):
+    """Per-clip logits from ONE padded forward pass instead of one call per clip.
+
+    Why this is safe to do by end-padding, with no masking in the loss:
+
+    * :class:`RiskGRU` is a **unidirectional** GRU, so the output at step ``t``
+      depends only on steps ``<= t``. Zeros appended after a clip's real frames
+      cannot influence any valid position.
+    * Its input normalisation is ``nn.LayerNorm(input_dim)``, which normalises
+      across the FEATURE dimension within each timestep independently. Padding
+      adds timesteps, not features, so no valid timestep's statistics change.
+      (A BatchNorm, or any norm over the time axis, would break this.)
+
+    So the valid prefix of each padded row is numerically identical to running
+    that clip alone -- ``tests/test_train_risk_head.py`` asserts exactly that.
+    The loss is already per-clip, so it needs no changes at all.
+
+    The previous ``[model(c["X"]) for c in batch]`` gave an effective batch size
+    of 1 and ~1.85x parallelism on 8 cores, because a batch-1 GRU is bound by
+    sequential per-timestep kernel launches rather than arithmetic.
+    """
+    lens = [int(c["X"].shape[0]) for c in batch]
+    width = int(batch[0]["X"].shape[1])
+    x = torch.zeros(len(batch), max(lens), width,
+                    dtype=batch[0]["X"].dtype)
+    for i, c in enumerate(batch):
+        x[i, :lens[i]] = c["X"]
+    out = model(x)                                  # (B, T_max)
+    return [out[i, :lens[i]] for i in range(len(batch))]
+
+
 def train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
     """Train the head, returning ``(best, history)``.
 
@@ -195,7 +226,7 @@ def train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
 
         for i in range(0, len(train_clips), args.batch_size):
             batch = train_clips[i:i + args.batch_size]
-            logits = [model(c["X"]) for c in batch]
+            logits = batched_logits(model, batch)
             loss, stats = batch_anticipation_loss(
                 logits,
                 [c["t"] for c in batch],
@@ -222,10 +253,24 @@ def train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
             "val_mean_AP": val["mean_AP"],
             "val_false_alarm": val["false_alarm_rate"]}})
 
+        # Selection must respect the constraint that makes a result reportable.
+        # Ranking on useful-warning alone previously kept epoch 5 (useful 0.833,
+        # FA 0.583) over epoch 8 (useful 0.833, FA 0.550) -- equal on the score,
+        # strictly better on false alarms -- because ties never updated and FA
+        # was not part of the criterion at all.
+        #
+        # Rank: (meets the FA target, useful-warning, -FA). So an FA-compliant
+        # epoch always beats a non-compliant one, ties on useful-warning break
+        # toward lower FA, and if nothing is compliant the old behaviour applies
+        # to whatever is available.
         score = val["useful_warning_rate"]
-        improved = score == score and (best is None or score > best["score"])
+        fa = val["false_alarm_rate"]
+        ok_fa = fa == fa and fa <= args.fa_target
+        rank = (1 if ok_fa else 0, score if score == score else -1.0,
+                -(fa if fa == fa else 1.0))
+        improved = score == score and (best is None or rank > best["rank"])
         if improved:
-            best = {"score": score, "epoch": epoch, "val": val,
+            best = {"score": score, "rank": rank, "epoch": epoch, "val": val,
                     "state": {k: v.clone() for k, v in model.state_dict().items()}}
             stale = 0
         else:
@@ -239,6 +284,7 @@ def train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
               f"mAP {_fmt(val['mean_AP'])}  "
               f"FA {_fmt(val['false_alarm_rate'])}  "
               f"lead {_fmt(val['mean_lead_s'], 2)}s"
+              f"{' ✓fa' if ok_fa else ''}"
               f"{'  <- best' if improved else ''}", flush=True)
 
         # Persist immediately, so an interrupted run still leaves the best model
@@ -293,6 +339,12 @@ def main():
                         "0 makes the loss blind to standing alarms -- see "
                         "a3ps/risk/anticipation_loss.py. Default %(default)s.")
     p.add_argument("--pos-weight", type=float, default=1.0)
+    p.add_argument("--fa-target", type=float, default=0.20,
+                   help="False-alarm rate the checkpoint selector treats as the "
+                        "hard constraint (default %(default)s, per "
+                        "docs/design/metrics.md). An epoch meeting it always "
+                        "beats one that does not; ties on useful-warning rate "
+                        "break toward lower FA.")
     p.add_argument("--threshold", type=float, default=0.5,
                    help="Alert threshold used when scoring.")
     p.add_argument("--confirm", type=int, default=3,
