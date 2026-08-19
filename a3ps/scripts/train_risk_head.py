@@ -166,11 +166,26 @@ def _fmt(x, nd=3):
 # training
 # ---------------------------------------------------------------------------
 
-def train(model, train_clips, val_clips, args):
+def train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
+    """Train the head, returning ``(best, history)``.
+
+    ``on_improve(best)`` is called every time an epoch sets a new best validation
+    score, and ``on_epoch(history)`` after every epoch. Both exist so the caller
+    can persist progress *as it happens*: this loop keeps the best weights in
+    memory, so without them a run that is interrupted -- or simply run for more
+    epochs than it needed -- loses the best model entirely. That is not
+    hypothetical; it cost us an 85-minute run whose best epoch was #5.
+
+    Early stopping: if ``args.patience`` is > 0 and no epoch improves on the best
+    score for that many consecutive epochs, training stops. On a 1,365-clip set
+    the head peaks within ~5-10 epochs and then overfits, so the default budget
+    is mostly spent making the result worse.
+    """
     opt = torch.optim.Adam(model.parameters(), lr=args.lr,
                            weight_decay=args.weight_decay)
     best = None
     history = []
+    stale = 0                      # epochs since the last improvement
 
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -207,17 +222,38 @@ def train(model, train_clips, val_clips, args):
             "val_mean_AP": val["mean_AP"],
             "val_false_alarm": val["false_alarm_rate"]}})
 
+        score = val["useful_warning_rate"]
+        improved = score == score and (best is None or score > best["score"])
+        if improved:
+            best = {"score": score, "epoch": epoch, "val": val,
+                    "state": {k: v.clone() for k, v in model.state_dict().items()}}
+            stale = 0
+        else:
+            stale += 1
+
+        # flush=True: without it a redirected/piped run shows nothing until the
+        # process exits, which makes a long run impossible to monitor.
         print(f"epoch {epoch:3d}  loss {train_loss:.4f}  "
               f"val useful {_fmt(val['useful_warning_rate'])} "
               f"({val['n_useful']}/{val['n_timed']}, {val['n_too_early']} early)  "
               f"mAP {_fmt(val['mean_AP'])}  "
               f"FA {_fmt(val['false_alarm_rate'])}  "
-              f"lead {_fmt(val['mean_lead_s'], 2)}s")
+              f"lead {_fmt(val['mean_lead_s'], 2)}s"
+              f"{'  <- best' if improved else ''}", flush=True)
 
-        score = val["useful_warning_rate"]
-        if score == score and (best is None or score > best["score"]):
-            best = {"score": score, "epoch": epoch, "val": val,
-                    "state": {k: v.clone() for k, v in model.state_dict().items()}}
+        # Persist immediately, so an interrupted run still leaves the best model
+        # and the history so far on disk.
+        if improved and on_improve is not None:
+            on_improve(best)
+        if on_epoch is not None:
+            on_epoch(history)
+
+        if args.patience > 0 and stale >= args.patience:
+            print(f"\nearly stop: no improvement for {stale} epoch(s) "
+                  f"(best was epoch {best['epoch']} at "
+                  f"{_fmt(best['score'])}). Stopping at epoch {epoch}/"
+                  f"{args.epochs}.", flush=True)
+            break
 
     if agg["n_untimed"]:
         print(f"\nnote: {agg['n_untimed']} positive-clip batches lacked "
@@ -233,7 +269,16 @@ def main():
                    help="Validation .npz directory. Omit to carve --val-frac "
                         "out of --features by clip.")
     p.add_argument("--val-frac", type=float, default=0.25)
-    p.add_argument("--epochs", type=int, default=30)
+    p.add_argument("--epochs", type=int, default=30,
+                   help="Maximum epochs. Early stopping usually ends the run "
+                        "sooner -- see --patience.")
+    p.add_argument("--patience", type=int, default=4,
+                   help="Stop after this many consecutive epochs with no "
+                        "improvement in the validation useful-warning rate "
+                        "(0 disables). On ~1.4k clips the head peaks within "
+                        "5-10 epochs and overfits after, so the default keeps "
+                        "runs short. The best checkpoint is written the moment "
+                        "it appears, so stopping early never loses it.")
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=1e-4)
@@ -312,8 +357,46 @@ def main():
           f"-> asks for a warning ~{expected_lead_time(0.0, 3.49, args.kappa):.2f}s "
           f"before impact on a mean-lead clip\n")
 
+    # Save-on-improvement. Defined here (not inside train()) so train() stays a
+    # pure loop and the persistence policy lives with the CLI that owns the paths.
+    def checkpoint_extra(b):
+        v = b["val"]
+        return {
+            "feature_dim": D,
+            "has_ego": n_ego == len(clips),
+            "n_clips_with_ego": n_ego,
+            "kappa": args.kappa,
+            "pre_alert_weight": args.pre_alert_weight,
+            "threshold": args.threshold,
+            "best_epoch": b["epoch"],
+            "val": {k: (v[k] if not isinstance(v[k], dict) else
+                        {str(a): c for a, c in v[k].items()}) for k in v},
+            "leakage_warning": bool(args.allow_leakage and same_dir),
+        }
+
+    def save_best(b):
+        if not args.out:
+            return
+        os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+        state = model.state_dict()
+        model.load_state_dict(b["state"])          # write the BEST weights...
+        try:
+            model.save(args.out, extra=checkpoint_extra(b))
+        finally:
+            model.load_state_dict(state)           # ...then restore current ones
+        print(f"           saved best (epoch {b['epoch']}) -> {args.out}",
+              flush=True)
+
+    def save_history(h):
+        if not args.history_json:
+            return
+        os.makedirs(os.path.dirname(args.history_json) or ".", exist_ok=True)
+        with open(args.history_json, "w", encoding="utf-8") as fh:
+            json.dump(h, fh, indent=2)
+
     t0 = time.perf_counter()
-    best, history = train(model, train_clips, val_clips, args)
+    best, history = train(model, train_clips, val_clips, args,
+                          on_improve=save_best, on_epoch=save_history)
     print(f"\ntrained in {time.perf_counter() - t0:.0f}s")
 
     if best is None:
@@ -331,25 +414,12 @@ def main():
         print(f"  AP @ -{tau * 1000:.0f} ms      : {_fmt(v['AP'][tau])}")
     print(f"  mean AP             : {_fmt(v['mean_AP'])}")
 
+    # Both were already written during training (save-on-improvement above); these
+    # final writes just guarantee the on-disk copy matches the returned best.
     if args.out:
-        os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-        model.save(args.out, extra={
-            "feature_dim": D,
-            "has_ego": n_ego == len(clips),
-            "n_clips_with_ego": n_ego,
-            "kappa": args.kappa,
-            "pre_alert_weight": args.pre_alert_weight,
-            "threshold": args.threshold,
-            "best_epoch": best["epoch"],
-            "val": {k: (v[k] if not isinstance(v[k], dict) else
-                        {str(a): b for a, b in v[k].items()}) for k in v},
-            "leakage_warning": bool(args.allow_leakage and same_dir),
-        })
-        print(f"\nwrote {args.out}")
-
+        save_best(best)
     if args.history_json:
-        with open(args.history_json, "w", encoding="utf-8") as fh:
-            json.dump(history, fh, indent=2)
+        save_history(history)
         print(f"wrote {args.history_json}")
 
 

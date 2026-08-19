@@ -1,0 +1,5 @@
+train 1365 clips (685 pos) | val 120 clips (60 pos)
+feature width 112
+RiskGRU hidden=64 layers=1 params=34,465 (causality check passed)
+loss: kappa=3.0 pre_alert_weight=0.5 -> asks for a warning ~0.98s before impact on a mean-lead clip
+
