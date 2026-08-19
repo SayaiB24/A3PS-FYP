@@ -611,15 +611,32 @@ function renderCompare() {
       <div class="cmp-when">${when}${extra || ""}</div>
     </div>`;
 
+  // The brake stage is a second, higher threshold on the same probability. It
+  // deliberately fires on a minority of events (recall 0.300 vs 0.750 at the
+  // alert threshold) in exchange for ~10x fewer false interventions, so "not
+  // reached" is the common and correct outcome, not a missing feature.
+  const brakeRow = L.brake_event
+    ? row("↳ virtual brake", "engaged",
+          fmt(L.brake_event.t), lead(L.brake_event.t))
+    : (L.event
+        ? `<div class="cmp-row"><div class="cmp-name">↳ virtual brake</div>
+             <div class="cmp-verdict">not reached</div>
+             <div class="cmp-when">risk stayed below ${
+               op.brake_threshold != null ? op.brake_threshold : 0.8}</div></div>`
+        : "");
+
   els.compareRows.innerHTML =
     row("Learned head (GRU)", L.verdict || "—",
         fmt(L.event ? L.event.t : null), lead(L.event ? L.event.t : null)) +
+    brakeRow +
     row("Threshold system", T.verdict || "—",
         fmt(T.first_alert_t),
         `${lead(T.first_alert_t)}${T.n_events ? ` · ${T.n_events} events` : ""}`) +
     `<div class="cmp-foot">clip ${r.clip_id} ·
        ${r.label === 1 ? "positive (risky event)" : "negative (ordinary driving)"} ·
-       operating point thr ${op.threshold} / confirm ${op.confirm}</div>`;
+       alert ≥ ${op.threshold}/${op.confirm}f · brake ≥ ${
+         op.brake_threshold != null ? op.brake_threshold : "—"}/${
+         op.brake_confirm != null ? op.brake_confirm : "—"}f</div>`;
 
   els.compareExplain.innerHTML = L.event && L.event.explanation
     ? `<div class="cmp-expl-label">explanation on intervention</div>
@@ -727,6 +744,28 @@ function drawCompare() {
   };
   tri((r.learned || {}).event ? r.learned.event.t : null, "#2ecc71", true);
   tri((r.threshold_system || {}).first_alert_t, "#e74c3c", false);
+
+  // Brake stage: a second marker plus its threshold line, so the escalation is
+  // visible on the curve rather than only in the console.
+  const bthr = (r.operating_point || {}).brake_threshold;
+  if (bthr != null) {
+    ctx.strokeStyle = "rgba(231,76,60,0.45)"; ctx.setLineDash([2, 4]); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, yOf(bthr)); ctx.lineTo(W, yOf(bthr)); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = "10px ui-monospace, monospace"; ctx.textBaseline = "bottom";
+    ctx.fillStyle = "rgba(231,76,60,0.85)";
+    ctx.fillText(`brake ${bthr}`, 3, yOf(bthr) - 1);
+  }
+  const be = (r.learned || {}).brake_event;
+  if (be) {
+    const x = tX(be.t), y = H - pad;
+    ctx.fillStyle = "#e74c3c";
+    ctx.beginPath();
+    ctx.moveTo(x - 5, y); ctx.lineTo(x + 5, y); ctx.lineTo(x, y - 8);
+    ctx.closePath(); ctx.fill();
+    ctx.font = "10px ui-monospace, monospace"; ctx.textBaseline = "bottom";
+    ctx.fillText("⛔", x + 6, y);
+  }
 
   // playhead
   const px = tX(els.video.currentTime || 0);

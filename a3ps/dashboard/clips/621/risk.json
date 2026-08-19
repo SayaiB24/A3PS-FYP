@@ -10,6 +10,8 @@
  "operating_point": {
   "threshold": 0.6,
   "confirm": 8,
+  "brake_threshold": 0.8,
+  "brake_confirm": 8,
   "rate_hz": 10.0
  },
  "window": {
@@ -549,7 +551,16 @@
    "type": "ALERT",
    "prob": 0.6646,
    "actor_cls": "car",
+   "ttc_s": 0.2,
    "explanation": "Collision alert: car ID-593 trajectory crossing ego path in 0.2 s (P=0.66, threshold 0.60). Warned 2.70 s before impact."
+  },
+  "brake_event": {
+   "t": 24.0,
+   "type": "VIRTUAL_BRAKE",
+   "prob": 0.8459,
+   "actor_cls": "car",
+   "ttc_s": 0.2,
+   "explanation": "Virtual braking engaged: car ID-577 trajectory crossing ego path in 0.2 s (P=0.85, threshold 0.80). Intervened 1.70 s before impact."
   },
   "verdict": "useful",
   "checkpoint": "risk_gru_k1p0.pt"

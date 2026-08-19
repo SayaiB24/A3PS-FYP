@@ -10,6 +10,8 @@
  "operating_point": {
   "threshold": 0.6,
   "confirm": 8,
+  "brake_threshold": 0.8,
+  "brake_confirm": 8,
   "rate_hz": 10.0
  },
  "window": {
@@ -421,6 +423,7 @@
    ]
   ],
   "event": null,
+  "brake_event": null,
   "verdict": "clean",
   "checkpoint": "risk_gru_k1p0.pt"
  },

@@ -58,6 +58,21 @@ from a3ps.risk.temporal import RiskGRU  # noqa: E402
 DEFAULT_THRESHOLD = 0.60
 DEFAULT_CONFIRM = 8
 
+# Second decision stage: VIRTUAL_BRAKE. The learned head emits a probability, so a
+# two-stage decision is just a second, higher threshold -- which is what the old
+# DecisionEngine did with its SAFE -> ALERT -> BRAKE state machine, and what the
+# Phase IV head was missing.
+#
+# 0.80 is not arbitrary: from eval/operating_point_sweep_k1p0.md at confirm 8 the
+# false-alarm rate is 0.167 at threshold 0.60 but **0.017** at 0.80 -- one false
+# intervention in 60 negatives. Braking is a far more consequential action than a
+# warning, so it should demand roughly an order of magnitude fewer false
+# positives. The cost is recall: 0.300 vs 0.750 useful-warning, i.e. the brake
+# stage fires on well under half the events the alert stage catches. That is the
+# intended asymmetry -- warn readily, intervene rarely.
+DEFAULT_BRAKE_THRESHOLD = 0.80
+DEFAULT_BRAKE_CONFIRM = 8
+
 ALERT_TYPES = ("ALERT", "VIRTUAL_BRAKE")
 
 
@@ -143,15 +158,15 @@ def dominant_actor_at(clip_json, t):
     return best
 
 
-def learned_explanation(prob, alert_t, event_t, actor, threshold):
-    """One-line explanation for the learned head's alert, via the shared template.
+def learned_explanation(prob, alert_t, event_t, actor, threshold, kind="ALERT"):
+    """One-line explanation for a learned-head event, via the shared template.
 
     Reuses ``a3ps.explain.templates.explain`` so the dashboard's wording matches
     the rest of the system, then appends the timing judgement that only the
     ground truth can supply.
     """
     ev = Event(
-        event_id=1, frame_idx=0, t=float(alert_t), type="ALERT",
+        event_id=1, frame_idx=0, t=float(alert_t), type=kind,
         actor_id=int((actor or {}).get("id") or 0),
         actor_cls=str((actor or {}).get("cls") or "vehicle"),
         collision_prob=float(prob), threshold=float(threshold),
@@ -161,7 +176,31 @@ def learned_explanation(prob, alert_t, event_t, actor, threshold):
     if event_t is None:
         return base
     lead = event_t - alert_t
-    return f"{base} Warned {lead:.2f} s before impact."
+    verb = "Intervened" if kind == "VIRTUAL_BRAKE" else "Warned"
+    return f"{base} {verb} {lead:.2f} s before impact."
+
+
+def two_stage_decision(probs, t, args):
+    """(alert_t, brake_t) from one probability track -- the learned head's decision.
+
+    Reuses :func:`first_alert_time` for both stages, so the alert semantics are
+    identical to the ones every metric is computed with; the brake stage is the
+    same rule at a higher threshold.
+
+    Brake is clamped to never precede alert. With a fixed confirm count a higher
+    threshold is almost always crossed later, but "N consecutive frames above X"
+    is not strictly monotonic in X on a spiky curve, and a brake shown before its
+    own warning would be nonsense.
+    """
+    alert_t = first_alert_time(probs, t, args.threshold, args.confirm)
+    brake_t = first_alert_time(probs, t, args.brake_threshold, args.brake_confirm)
+    if brake_t is not None and alert_t is not None and brake_t < alert_t:
+        brake_t = alert_t
+    if brake_t is not None and alert_t is None:
+        # Can only happen if the alert stage never confirmed; treat the brake as
+        # its own warning rather than dropping the more severe event.
+        alert_t = brake_t
+    return alert_t, brake_t
 
 
 def risk_level_for(prob, threshold):
@@ -181,7 +220,7 @@ def risk_level_for(prob, threshold):
     return "safe"
 
 
-def build_slim_overlay(clip_json, learned_curve, args, cid, learned_event=None):
+def build_slim_overlay(clip_json, learned_curve, args, cid, learned_events=None):
     """A small events.json that still drives masks/trails/predictions/corridor.
 
     The cached ClipResult is 20-50 MB per clip: it carries BEV fields the image-
@@ -254,20 +293,23 @@ def build_slim_overlay(clip_json, learned_curve, args, cid, learned_event=None):
         })
 
     events_out = []
-    if learned_event is not None:
-        # Surface the learned head's intervention in the dashboard event log, so
-        # the explanation is visible there and not only in the compare panel.
+    for _n, _ev in enumerate(learned_events or (), start=1):
+        # Surface the learned head's ALERT and VIRTUAL_BRAKE in the dashboard
+        # event log, so the escalation and its explanation are visible there and
+        # not only in the compare panel. The brake event is also what drives the
+        # red border flash, vignette and banner in app.js.
         events_out.append({
-            "event_id": 1,
+            "event_id": _n,
             "frame_idx": 0,
-            "t": learned_event["t"],
-            "type": "ALERT",
+            "t": _ev["t"],
+            "type": _ev["type"],
             "actor_id": 0,
-            "actor_cls": learned_event.get("actor_cls") or "scene",
-            "collision_prob": learned_event["prob"],
-            "threshold": args.threshold,
-            "ttc_s": None,
-            "explanation_template": learned_event["explanation"],
+            "actor_cls": _ev.get("actor_cls") or "scene",
+            "collision_prob": _ev["prob"],
+            "threshold": (args.brake_threshold if _ev["type"] == "VIRTUAL_BRAKE"
+                          else args.threshold),
+            "ttc_s": _ev.get("ttc_s"),
+            "explanation_template": _ev["explanation"],
             "explanation_llm": None,
         })
 
@@ -299,7 +341,7 @@ def build_clip(cid, row, model, args):
         probs = torch.sigmoid(model(X)).flatten()
     learned_curve = [[round(float(a), 3), round(float(b), 4)]
                      for a, b in zip(t.tolist(), probs.tolist())]
-    fa = first_alert_time(probs, t, args.threshold, args.confirm)
+    fa, brake_t = two_stage_decision(probs, t, args)
 
     event_t = _f(row.get("event_time_s"))
     alert_t = _f(row.get("alert_time_s"))
@@ -307,18 +349,25 @@ def build_clip(cid, row, model, args):
 
     old_curve, old_events, clip_json = old_system_curve(cached)
 
-    learned_event = None
-    if fa is not None:
-        idx = min(range(len(learned_curve)), key=lambda i: abs(learned_curve[i][0] - fa))
-        actor = dominant_actor_at(clip_json, fa)
-        learned_event = {
-            "t": round(float(fa), 3),
-            "type": "ALERT",
+    def at_curve(when, thr, kind):
+        """Build one learned-head event at time ``when``."""
+        idx = min(range(len(learned_curve)),
+                  key=lambda i: abs(learned_curve[i][0] - when))
+        actor = dominant_actor_at(clip_json, when)
+        ev = {
+            "t": round(float(when), 3),
+            "type": kind,
             "prob": learned_curve[idx][1],
             "actor_cls": (actor or {}).get("cls"),
+            "ttc_s": (actor or {}).get("ttc_s"),
             "explanation": learned_explanation(
-                learned_curve[idx][1], fa, event_t, actor, args.threshold),
+                learned_curve[idx][1], when, event_t, actor, thr, kind=kind),
         }
+        return ev
+
+    learned_event = at_curve(fa, args.threshold, "ALERT") if fa is not None else None
+    learned_brake = (at_curve(brake_t, args.brake_threshold, "VIRTUAL_BRAKE")
+                     if brake_t is not None else None)
 
     def verdict():
         if label == 0:
@@ -351,6 +400,8 @@ def build_clip(cid, row, model, args):
         "fps": _f(row.get("fps")),
         "markers": {"time_of_alert": alert_t, "time_of_event": event_t},
         "operating_point": {"threshold": args.threshold, "confirm": args.confirm,
+                            "brake_threshold": args.brake_threshold,
+                            "brake_confirm": args.brake_confirm,
                             "rate_hz": meta.get("rate_hz")},
         "window": {"start_s": meta.get("window_start_s"),
                    "end_s": meta.get("window_end_s")},
@@ -358,6 +409,7 @@ def build_clip(cid, row, model, args):
             "name": "Learned risk head (GRU, Phase IV)",
             "curve": learned_curve,
             "event": learned_event,
+            "brake_event": learned_brake,
             "verdict": verdict(),
             "checkpoint": os.path.basename(args.checkpoint),
         },
@@ -372,7 +424,8 @@ def build_clip(cid, row, model, args):
     }
     overlay = (None if args.no_overlay
                else build_slim_overlay(clip_json, learned_curve, args, cid,
-                                       learned_event))
+                                       [e for e in (learned_event, learned_brake)
+                                        if e is not None]))
     return out, None, overlay
 
 
@@ -424,6 +477,11 @@ def main():
     p.add_argument("--n", type=int, default=6, help="How many clips when auto.")
     p.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     p.add_argument("--confirm", type=int, default=DEFAULT_CONFIRM)
+    p.add_argument("--brake-threshold", type=float, default=DEFAULT_BRAKE_THRESHOLD,
+                   help="Second-stage VIRTUAL_BRAKE threshold (default "
+                        "%(default)s -- false-alarm rate 0.017 vs 0.167 at the "
+                        "alert threshold; see the module docstring).")
+    p.add_argument("--brake-confirm", type=int, default=DEFAULT_BRAKE_CONFIRM)
     p.add_argument("--overlay-hz", type=float, default=15.0,
                    help="Frame rate for the slim overlay events.json (default "
                         "%(default)s). Lower = smaller file, choppier overlay.")
@@ -446,7 +504,7 @@ def main():
     cids = (pick_auto(index, args, args.n) if args.clips == "auto"
             else [str(int(c)) for c in args.clips.split(",") if c.strip()])
 
-    built = []
+    built, built_meta = [], []
     for cid in cids:
         row = index.get(cid)
         if row is None:
@@ -482,13 +540,26 @@ def main():
               f"@{(lr['event'] or {}).get('t', float('nan')):>6} s  |  "
               f"old {th['verdict']:11s} @{th['first_alert_t']} s "
               f"({th['n_events']} events)"
+              + (f"  brake @{lr['brake_event']['t']}s" if lr.get("brake_event") else "")
               + (f"  overlay {ov_mb:.1f} MB" if overlay is not None else ""))
         built.append(cid)
+        built_meta.append({"id": cid, "label": data["label"],
+                           "brake": bool(lr.get("brake_event"))})
 
     # The manifest is owned by scripts/update_manifest.py, which writes the
     # grouped/labelled form the dropdown needs. Writing a plain id list here
     # would silently downgrade it and lose the grouping, so prompt instead.
     print(f"\nbuilt {len(built)} clip(s): {', '.join(built)}")
+
+    n_pos = sum(1 for c in built_meta if c.get("label") == 1)
+    n_brake = sum(1 for c in built_meta if c.get("brake"))
+    if n_pos:
+        print(f"  virtual brake engaged on {n_brake}/{n_pos} positive(s). The brake "
+              f"stage is a higher threshold ({args.brake_threshold}) and fires on a "
+              f"minority of events by design -- useful-warning recall is ~0.30 there "
+              f"vs ~0.75 at the alert threshold, bought with ~10x fewer false "
+              f"interventions. 'not reached' is the expected common case.")
+
     print("\nNow rebuild the dropdown (this script does not touch the manifest):")
     print("  python scripts/update_manifest.py --require-video")
 

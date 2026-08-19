@@ -10,6 +10,8 @@
  "operating_point": {
   "threshold": 0.6,
   "confirm": 8,
+  "brake_threshold": 0.8,
+  "brake_confirm": 8,
   "rate_hz": 10.0
  },
  "window": {
@@ -545,8 +547,10 @@
    "type": "ALERT",
    "prob": 0.6862,
    "actor_cls": "car",
+   "ttc_s": 0.2,
    "explanation": "Collision alert: car ID-100 trajectory crossing ego path in 0.2 s (P=0.69, threshold 0.60). Warned 2.10 s before impact."
   },
+  "brake_event": null,
   "verdict": "useful",
   "checkpoint": "risk_gru_k1p0.pt"
  },
