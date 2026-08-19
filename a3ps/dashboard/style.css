@@ -102,11 +102,17 @@ main {
 .console {
   display: flex; flex-direction: column; gap: .75rem;
   background: var(--panel); border: 1px solid var(--border);
-  border-radius: 8px; padding: .8rem; min-height: 0; overflow: hidden;
+  border-radius: 8px; padding: .8rem; min-height: 0;
+  /* auto, not hidden: the Phase IV comparison panel added a third block to this
+     column, and `hidden` silently clipped whatever did not fit -- including the
+     second verdict row -- with no way to reach it. */
+  overflow-y: auto;
 }
 .console h2 { font-size: .8rem; letter-spacing: 1px; margin: 0; color: var(--muted); }
 .panel { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: .55rem .6rem; }
-.panel.grow { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* min-height keeps the event log usable once the console can scroll: without
+   it, flex would squeeze this panel to nothing to avoid overflowing. */
+.panel.grow { flex: 1 0 auto; min-height: 9rem; display: flex; flex-direction: column; }
 .panel h3 { font-size: .75rem; margin: 0 0 .45rem; color: var(--muted); font-weight: 600; }
 
 .threats { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
@@ -244,3 +250,4 @@ main {
 .risk-caution { color: var(--caution); }
 .risk-danger  { color: var(--danger); }
 .risk-muted   { color: var(--muted); }
+.legend .sw.window { background: rgba(46,204,113,0.18); border: 1px dashed rgba(46,204,113,0.5); }

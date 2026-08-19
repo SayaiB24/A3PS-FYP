@@ -408,11 +408,27 @@ function updateThreshold() {
   if (state.risk) {
     const op = state.risk.operating_point || {};
     const thr = op.threshold != null ? op.threshold : 0.7;
-    const p = learnedRiskAt(els.video.currentTime || 0);
-    const band = p == null ? "muted"
-      : (p >= thr ? "danger" : (p >= 0.6 * thr ? "caution" : "safe"));
+    const w = state.risk.window || {};
+    const t = els.video.currentTime || 0;
+    const p = learnedRiskAt(t);
+
+    // The head only sees a 13 s window of each clip (its features), so for most
+    // of a ~45 s clip there is genuinely no prediction. Say that, rather than
+    // showing a bare dash that reads as missing data or a broken model.
+    if (p == null) {
+      const range = (w.start_s != null && w.end_s != null)
+        ? `${w.start_s.toFixed(1)}–${w.end_s.toFixed(1)} s` : "the analysed window";
+      const where = (w.start_s != null && t < w.start_s) ? "before" : "after";
+      els.threshold.innerHTML =
+        `Learned risk: <b class="risk-muted">n/a</b> ` +
+        `<span style="color:var(--muted)">(${where} the ${range} analysis ` +
+        `window — the head scores 13 s per clip)</span>`;
+      return;
+    }
+
+    const band = p >= thr ? "danger" : (p >= 0.6 * thr ? "caution" : "safe");
     els.threshold.innerHTML =
-      `Learned risk: <b class="risk-${band}">${p == null ? "–" : p.toFixed(2)}</b>` +
+      `Learned risk: <b class="risk-${band}">${p.toFixed(2)}</b>` +
       ` <span style="color:var(--muted)">fires at ≥ ${thr.toFixed(2)} held ` +
       `${op.confirm != null ? op.confirm : 5} frames</span>`;
     return;
@@ -649,6 +665,21 @@ function drawCompare() {
   const plotH = H - pad * 2;
   const yOf = (p) => pad + (1 - p) * plotH;
   ctx.clearRect(0, 0, W, H);
+
+  // Shade the region the learned head actually saw. Its features cover only a
+  // 13 s window, so the green curve legitimately spans a slice of a ~45 s clip;
+  // without this the gap looks like the model failing to produce output.
+  const w = r.window || {};
+  if (w.start_s != null && w.end_s != null) {
+    const x0 = tX(w.start_s), x1 = tX(w.end_s);
+    ctx.fillStyle = "rgba(46,204,113,0.06)";
+    ctx.fillRect(x0, 0, Math.max(1, x1 - x0), H);
+    ctx.strokeStyle = "rgba(46,204,113,0.25)";
+    ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x0, 0); ctx.lineTo(x0, H);
+    ctx.moveTo(x1, 0); ctx.lineTo(x1, H); ctx.stroke();
+    ctx.setLineDash([]);
+  }
 
   // The old system's curve first, so the learned curve reads on top of it.
   drawCurve(ctx, (r.threshold_system || {}).curve, W, H, pad,
