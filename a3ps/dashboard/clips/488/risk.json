@@ -544,8 +544,10 @@
   ],
   "event": {
    "t": 20.333,
+   "frame_idx": 610,
    "type": "ALERT",
    "prob": 0.6326,
+   "actor_id": 52,
    "actor_cls": "car",
    "ttc_s": null,
    "explanation": "Collision alert: car ID-52 trajectory crossing ego path in unknown time (P=0.63, threshold 0.60). Warned 3.27 s before impact."

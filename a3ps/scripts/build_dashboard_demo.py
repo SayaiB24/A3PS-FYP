@@ -135,26 +135,34 @@ def old_system_curve(events_path):
     return curve, events, j
 
 
-def dominant_actor_at(clip_json, t):
-    """The track with the highest collision prob near time ``t`` (or None).
+def dominant_actor_over(clip_json, t0, t1):
+    """The most-implicated track across ``[t0, t1]``, by peak collision prob.
 
-    Used only to name an actor in the learned model's explanation text. The
-    learned head itself consumes pooled features and does not attribute risk to
-    a specific track, so this is presentation, not a model output -- and the
-    explanation wording says so.
+    Chosen ONCE per incident, not per event, for two reasons:
+
+    * The learned head is scene-level -- it pools features across actors and
+      emits one probability per frame -- so it has no per-event actor opinion at
+      all. Picking independently at the alert and brake times gave them
+      *different* actor ids, which implies a per-actor escalation the model never
+      performed (and broke make_qual_figure.py, which reasonably expects an
+      incident's ALERT and VIRTUAL_BRAKE to concern one actor).
+    * The named actor is therefore presentation only: it is the track the Phase
+      III forecaster considered most at risk over the incident window. The
+      explanation text and docs both say so.
     """
-    best, best_dt = None, 1e9
+    lo, hi = (t0, t1) if t1 is not None else (t0, t0)
+    lo, hi = min(lo, hi) - 0.5, max(lo, hi) + 0.5
+    best = None
     for fr in clip_json["frames"]:
-        dt = abs(float(fr["t"]) - t)
-        if dt > 0.5 or dt > best_dt:
+        t = float(fr["t"])
+        if t < lo or t > hi:
             continue
         for tr in fr["tracks"]:
             pred = tr.get("prediction") or {}
             p = pred.get("collision_prob") or 0.0
-            if best is None or p > best.get("_p", -1):
+            if best is None or p > best["_p"]:
                 best = {"cls": tr.get("cls"), "id": tr.get("id"),
                         "ttc_s": pred.get("ttc_s"), "_p": p}
-                best_dt = dt
     return best
 
 
@@ -264,25 +272,36 @@ def build_slim_overlay(clip_json, learned_curve, args, cid, learned_events=None)
             mask = tr.get("mask_poly")
             if mask:
                 mask = simplify_polygon(mask, args.overlay_mask_points)
+            # centroid_img is REQUIRED by ClipResult.from_dict even though the JS
+            # renderer never reads it -- omitting it made the overlay render fine
+            # in the browser but unloadable by any Python tooling
+            # (scripts/make_qual_figure.py failed on it). Keep the slim overlay
+            # schema-valid.
             out = {
                 "id": tr["id"], "cls": tr["cls"],
                 "bbox": [round(float(v)) for v in tr["bbox"]],
+                "centroid_img": [round(float(v), 1) for v in tr["centroid_img"]],
                 "risk_level": level,
             }
-            if mask is not None and len(mask):
-                out["mask_poly"] = [[round(float(x)), round(float(y))] for x, y in mask]
+            out["mask_poly"] = ([[round(float(x)), round(float(y))] for x, y in mask]
+                                if mask is not None and len(mask) else None)
             if tr.get("history_img"):
                 out["history_img"] = [[round(float(x)), round(float(y))]
                                       for x, y in tr["history_img"]]
             mean_img = pred.get("mean_img")
             if mean_img or pred.get("collision_prob") is not None:
-                out["prediction"] = {}
-                if mean_img:
-                    out["prediction"]["mean_img"] = [
-                        [round(float(x)), round(float(y))] for x, y in mean_img]
-                if pred.get("collision_prob") is not None:
-                    out["prediction"]["collision_prob"] = round(
-                        float(pred["collision_prob"]), 3)
+                out["prediction"] = {
+                    "horizon_s": pred.get("horizon_s", 4.0),
+                    "dt": pred.get("dt", 0.2),
+                    "mean_img": ([[round(float(x)), round(float(y))]
+                                  for x, y in mean_img] if mean_img else []),
+                    "collision_prob": (round(float(pred["collision_prob"]), 3)
+                                       if pred.get("collision_prob") is not None
+                                       else None),
+                    "ttc_s": pred.get("ttc_s"),
+                }
+            else:
+                out["prediction"] = None
             tracks.append(out)
 
         ego = fr.get("ego") or {}
@@ -292,18 +311,32 @@ def build_slim_overlay(clip_json, learned_curve, args, cid, learned_events=None)
             "context": {"learned_risk": None if p is None else round(p, 4)},
         })
 
+    # Snap each event's frame_idx to a frame that SURVIVED decimation. The event
+    # times come from the full-rate curve, but this overlay only keeps every
+    # 1/overlay_hz-th frame, so a source frame_idx often is not present here --
+    # and tooling that looks the event up by frame_idx then fails outright
+    # (make_qual_figure.py did). The event's `t` stays exact; only the index is
+    # snapped, to the nearest kept frame.
+    kept = [(fr["frame_idx"], fr["t"]) for fr in frames_out]
+
+    def snap(ev):
+        if not kept:
+            return ev
+        fi, _ = min(kept, key=lambda k: abs(k[1] - ev["t"]))
+        return {**ev, "frame_idx": int(fi)}
+
     events_out = []
-    for _n, _ev in enumerate(learned_events or (), start=1):
+    for _n, _ev in enumerate((snap(e) for e in (learned_events or ())), start=1):
         # Surface the learned head's ALERT and VIRTUAL_BRAKE in the dashboard
         # event log, so the escalation and its explanation are visible there and
         # not only in the compare panel. The brake event is also what drives the
         # red border flash, vignette and banner in app.js.
         events_out.append({
             "event_id": _n,
-            "frame_idx": 0,
+            "frame_idx": _ev["frame_idx"],
             "t": _ev["t"],
             "type": _ev["type"],
-            "actor_id": 0,
+            "actor_id": _ev["actor_id"],
             "actor_cls": _ev.get("actor_cls") or "scene",
             "collision_prob": _ev["prob"],
             "threshold": (args.brake_threshold if _ev["type"] == "VIRTUAL_BRAKE"
@@ -349,15 +382,28 @@ def build_clip(cid, row, model, args):
 
     old_curve, old_events, clip_json = old_system_curve(cached)
 
+    incident_actor = (dominant_actor_over(clip_json, fa, brake_t)
+                      if fa is not None else None)
+
     def at_curve(when, thr, kind):
-        """Build one learned-head event at time ``when``."""
+        """Build one learned-head event at time ``when``.
+
+        ``frame_idx`` and ``actor_id`` must be REAL, not placeholders: tooling
+        locates an event's frame by ``frame_idx`` and its actor by ``actor_id``
+        (scripts/make_qual_figure.py does both). Hardcoding zeros made it render
+        frame 0 four times over with "actor not tracked this frame".
+        """
         idx = min(range(len(learned_curve)),
                   key=lambda i: abs(learned_curve[i][0] - when))
-        actor = dominant_actor_at(clip_json, when)
+        actor = incident_actor
+        # Nearest real frame in the source clip, for its frame_idx.
+        src = min(clip_json["frames"], key=lambda f: abs(float(f["t"]) - when))
         ev = {
             "t": round(float(when), 3),
+            "frame_idx": int(src["frame_idx"]),
             "type": kind,
             "prob": learned_curve[idx][1],
+            "actor_id": int((actor or {}).get("id") or 0),
             "actor_cls": (actor or {}).get("cls"),
             "ttc_s": (actor or {}).get("ttc_s"),
             "explanation": learned_explanation(

@@ -548,19 +548,23 @@
   ],
   "event": {
    "t": 23.0,
+   "frame_idx": 690,
    "type": "ALERT",
    "prob": 0.6646,
+   "actor_id": 593,
    "actor_cls": "car",
    "ttc_s": 0.2,
    "explanation": "Collision alert: car ID-593 trajectory crossing ego path in 0.2 s (P=0.66, threshold 0.60). Warned 2.70 s before impact."
   },
   "brake_event": {
    "t": 24.0,
+   "frame_idx": 720,
    "type": "VIRTUAL_BRAKE",
    "prob": 0.8459,
+   "actor_id": 593,
    "actor_cls": "car",
    "ttc_s": 0.2,
-   "explanation": "Virtual braking engaged: car ID-577 trajectory crossing ego path in 0.2 s (P=0.85, threshold 0.80). Intervened 1.70 s before impact."
+   "explanation": "Virtual braking engaged: car ID-593 trajectory crossing ego path in 0.2 s (P=0.85, threshold 0.80). Intervened 1.70 s before impact."
   },
   "verdict": "useful",
   "checkpoint": "risk_gru_k1p0.pt"
