@@ -20,6 +20,7 @@
       <label><input type="checkbox" id="layer-corridor" checked /> corridor</label>
     </fieldset>
     <span id="debug" class="debug">frame –</span>
+    <span id="system-badge" class="system-badge hidden">–</span>
   </header>
 
   <main>
@@ -35,6 +36,10 @@
 
       <section class="panel">
         <h3>Top threats</h3>
+        <div id="threats-note" class="panel-note hidden">
+          per-actor geometric collision probability (Phase&nbsp;III forecaster) —
+          the learned head scores the whole scene, not individual actors
+        </div>
         <ul id="threats" class="threats"><li class="empty">—</li></ul>
       </section>
 
@@ -85,6 +90,6 @@
        manifest gained a grouped {clips:[...]} shape that the previous app.js
        could not read -- a stale cached script produced an empty dropdown and a
        blank page with no error. BUMP THIS whenever app.js changes shape. -->
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>

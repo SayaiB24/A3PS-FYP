@@ -223,3 +223,24 @@ main {
   background: var(--panel2); font-size: .72rem; font-family: ui-monospace, monospace;
 }
 .stage-msg code { color: var(--accent); font-family: ui-monospace, monospace; }
+
+/* Which system is driving the current view (header badge). */
+.system-badge {
+  padding: .18rem .5rem; border-radius: 999px;
+  font-size: .68rem; letter-spacing: .02em; white-space: nowrap;
+  background: var(--panel2); border: 1px solid var(--border); color: var(--muted);
+}
+.system-badge.learned { border-color: var(--safe); color: var(--safe); }
+.system-badge.hidden { display: none; }
+
+/* Clarifying sub-caption inside a console panel. */
+.panel-note {
+  margin: -.15rem 0 .4rem; font-size: .65rem; line-height: 1.4; color: var(--muted);
+}
+.panel-note.hidden { display: none; }
+
+/* Live learned-risk readout, coloured by band. */
+.risk-safe    { color: var(--safe); }
+.risk-caution { color: var(--caution); }
+.risk-danger  { color: var(--danger); }
+.risk-muted   { color: var(--muted); }

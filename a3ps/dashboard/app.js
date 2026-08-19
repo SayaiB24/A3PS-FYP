@@ -24,6 +24,8 @@ const els = {
   comparePanel: $("compare-panel"),
   compareRows: $("compare-rows"),
   compareExplain: $("compare-explain"),
+  systemBadge: $("system-badge"),
+  threatsNote: $("threats-note"),
   scrubber: $("scrubber"),
   timeReadout: $("time-readout"),
   btnBack: $("btn-back"),
@@ -387,7 +389,35 @@ function updateThreats() {
   }
 }
 
+function learnedRiskAt(t) {
+  const curve = state.risk && state.risk.learned && state.risk.learned.curve;
+  if (!curve || !curve.length) return null;
+  let best = null, bestDt = Infinity;
+  for (const [ct, cp] of curve) {
+    const dt = Math.abs(ct - t);
+    if (dt < bestDt) { bestDt = dt; best = cp; }
+  }
+  return bestDt <= 0.5 ? best : null;
+}
+
 function updateThreshold() {
+  // Phase IV clips are driven by the learned head, whose decision rule is a flat
+  // probability threshold held for N consecutive frames -- NOT the old system's
+  // context-lowered active_threshold. Showing the latter here would name a
+  // parameter that has no effect on what you are watching.
+  if (state.risk) {
+    const op = state.risk.operating_point || {};
+    const thr = op.threshold != null ? op.threshold : 0.7;
+    const p = learnedRiskAt(els.video.currentTime || 0);
+    const band = p == null ? "muted"
+      : (p >= thr ? "danger" : (p >= 0.6 * thr ? "caution" : "safe"));
+    els.threshold.innerHTML =
+      `Learned risk: <b class="risk-${band}">${p == null ? "–" : p.toFixed(2)}</b>` +
+      ` <span style="color:var(--muted)">fires at ≥ ${thr.toFixed(2)} held ` +
+      `${op.confirm != null ? op.confirm : 5} frames</span>`;
+    return;
+  }
+
   const cf = state.currentFrame;
   const ctx = cf && cf.context;
   const flags = (ctx && ctx.flags) || [];
@@ -531,6 +561,22 @@ function renderCompare() {
   const show = !!r;
   els.compareWrap.classList.toggle("hidden", !show);
   els.comparePanel.classList.toggle("hidden", !show);
+
+  // Say plainly which system is driving what you are looking at -- the two
+  // colour the overlay by different quantities, so this is not cosmetic.
+  els.systemBadge.classList.remove("hidden");
+  els.systemBadge.classList.toggle("learned", show);
+  els.systemBadge.textContent = show
+    ? "learned head (GRU) · scene risk"
+    : "threshold system · per-actor risk";
+  els.systemBadge.title = show
+    ? "Actor colour is the learned head's frame-level risk, applied scene-wide. "
+      + "The head pools features across actors, so it does not attribute risk to "
+      + "an individual actor."
+    : "Actor colour is this actor's own collision probability from the "
+      + "pre-Phase IV threshold risk engine.";
+  els.threatsNote.classList.toggle("hidden", !show);
+
   if (!show) return;
 
   const L = r.learned || {}, T = r.threshold_system || {};
