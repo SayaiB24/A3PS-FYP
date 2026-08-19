@@ -1,1 +1,114 @@
-["621", "488", "1004", "690", "1085", "1261", "dev15", "dev04", "dev06", "dev13", "dev11", "dev12", "dev14", "02134", "dev01", "dev02", "dev03", "dev05", "dev07", "dev08", "dev09", "dev10"]
+{
+ "clips": [
+  {
+   "id": "488",
+   "group": "Phase IV \u2014 learned vs threshold system",
+   "label": "488 \u00b7 pos \u00b7 learned useful / old too early"
+  },
+  {
+   "id": "621",
+   "group": "Phase IV \u2014 learned vs threshold system",
+   "label": "621 \u00b7 pos \u00b7 learned useful / old too early"
+  },
+  {
+   "id": "690",
+   "group": "Phase IV \u2014 learned vs threshold system",
+   "label": "690 \u00b7 pos \u00b7 learned useful / old too early"
+  },
+  {
+   "id": "1004",
+   "group": "Phase IV \u2014 learned vs threshold system",
+   "label": "1004 \u00b7 pos \u00b7 learned useful / old too early"
+  },
+  {
+   "id": "1085",
+   "group": "Phase IV \u2014 learned vs threshold system",
+   "label": "1085 \u00b7 neg \u00b7 both clean"
+  },
+  {
+   "id": "1261",
+   "group": "Phase IV \u2014 learned vs threshold system",
+   "label": "1261 \u00b7 neg \u00b7 learned clean / old false alarm"
+  },
+  {
+   "id": "dev04",
+   "group": "Old system \u2014 clips with traffic",
+   "label": "dev04 \u00b7 7.2 actors/frame \u00b7 8 events"
+  },
+  {
+   "id": "dev14",
+   "group": "Old system \u2014 clips with traffic",
+   "label": "dev14 \u00b7 6.8 actors/frame \u00b7 2 events"
+  },
+  {
+   "id": "dev15",
+   "group": "Old system \u2014 clips with traffic",
+   "label": "dev15 \u00b7 5.9 actors/frame \u00b7 18 events"
+  },
+  {
+   "id": "02134",
+   "group": "Old system \u2014 clips with traffic",
+   "label": "02134 \u00b7 2.0 actors/frame \u00b7 1 events"
+  },
+  {
+   "id": "dev06",
+   "group": "Old system \u2014 clips with traffic",
+   "label": "dev06 \u00b7 1.5 actors/frame \u00b7 6 events"
+  },
+  {
+   "id": "dev13",
+   "group": "Old system \u2014 clips with traffic",
+   "label": "dev13 \u00b7 1.3 actors/frame \u00b7 6 events"
+  },
+  {
+   "id": "dev11",
+   "group": "Old system \u2014 clips with traffic",
+   "label": "dev11 \u00b7 1.0 actors/frame \u00b7 4 events"
+  },
+  {
+   "id": "dev08",
+   "group": "Old system \u2014 sparse / near-empty",
+   "label": "dev08 \u00b7 0.9 actors/frame"
+  },
+  {
+   "id": "dev12",
+   "group": "Old system \u2014 sparse / near-empty",
+   "label": "dev12 \u00b7 0.4 actors/frame"
+  },
+  {
+   "id": "dev09",
+   "group": "Old system \u2014 sparse / near-empty",
+   "label": "dev09 \u00b7 0.3 actors/frame"
+  },
+  {
+   "id": "dev05",
+   "group": "Old system \u2014 sparse / near-empty",
+   "label": "dev05 \u00b7 0.2 actors/frame"
+  },
+  {
+   "id": "dev10",
+   "group": "Old system \u2014 sparse / near-empty",
+   "label": "dev10 \u00b7 0.1 actors/frame"
+  },
+  {
+   "id": "dev02",
+   "group": "Old system \u2014 sparse / near-empty",
+   "label": "dev02 \u00b7 empty"
+  },
+  {
+   "id": "dev07",
+   "group": "Old system \u2014 sparse / near-empty",
+   "label": "dev07 \u00b7 empty"
+  },
+  {
+   "id": "dev03",
+   "group": "Old system \u2014 sparse / near-empty",
+   "label": "dev03 \u00b7 empty"
+  },
+  {
+   "id": "dev01",
+   "group": "Old system \u2014 sparse / near-empty",
+   "label": "dev01 \u00b7 empty"
+  }
+ ]
+}

@@ -120,16 +120,35 @@ function computeReactiveMarkers() {
 // ---------------------------------------------------------------------------
 
 async function loadManifest() {
-  let ids = [];
+  let raw = [];
   try {
-    ids = await (await fetch("clips/manifest.json", { cache: "no-store" })).json();
+    raw = await (await fetch("clips/manifest.json", { cache: "no-store" })).json();
   } catch (e) { console.error("manifest load failed", e); }
+
+  // Two accepted shapes: the grouped/labelled form written by
+  // scripts/update_manifest.py ({clips:[{id,group,label}]}), and a plain array
+  // of ids from older manifests. Normalise to the former.
+  const clips = Array.isArray(raw)
+    ? raw.map((id) => ({ id, group: "", label: id }))
+    : (raw && Array.isArray(raw.clips) ? raw.clips : []);
+
   els.select.innerHTML = "";
-  (Array.isArray(ids) ? ids : []).forEach((id) => {
+  let group = null, target = els.select;
+  clips.forEach((c) => {
+    if (c.group && c.group !== group) {
+      group = c.group;
+      target = document.createElement("optgroup");
+      target.label = group;
+      els.select.appendChild(target);
+    } else if (!c.group) {
+      target = els.select;
+    }
     const o = document.createElement("option");
-    o.value = id; o.textContent = id; els.select.appendChild(o);
+    o.value = c.id;
+    o.textContent = c.label || c.id;
+    target.appendChild(o);
   });
-  if (ids.length) loadClip(ids[0]);
+  if (clips.length) loadClip(clips[0].id);
 }
 
 async function loadClip(id) {

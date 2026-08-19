@@ -1,4 +1,4 @@
-f# A3PS — Execution Guide (from scratch)
+# A3PS — Execution Guide (from scratch)
 
 This is the "I just got this repo, how do I run everything" guide. Follow it
 top to bottom on a fresh machine and you end up with the full pipeline
@@ -6,10 +6,76 @@ running, all evaluation numbers generated, and the dashboard demo working.
 No prior knowledge of the project is assumed.
 
 Companion docs:
+- **`../handoff/README.md`** — **start here to continue the project**: what to do next, how to reproduce every committed result by hand.
 - **`../design/logic_pipeline.md`** — *how* each file works and why (read after this).
 - **`../design/metrics.md`** — deep reference for every metric/eval script.
 - **`GPU_HANDOFF.md`** — the two-laptop (CPU dev / GPU run) workflow specifics.
 - **`../design/QnA.md`** — answers to every tricky question about the implementation.
+
+---
+
+## How to run this project — quick start
+
+Three paths depending on what you want. **Path A needs nothing but the repo**;
+B and C need data.
+
+### Path A — see it working in ~3 minutes (no data, no GPU)
+
+```powershell
+git clone https://github.com/SayaliB-04/A3ps-actual-P.git
+cd A3ps-actual-P\a3ps
+
+python -m venv ..\.venv
+..\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+pytest -q                       # expect: 164 passed
+```
+
+All tests are CPU-only and need no data or model weights, so this is the fastest
+proof the install is sound.
+
+### Path B — run the dashboard (needs the repo's committed demo data)
+
+```powershell
+python scripts/build_dashboard_demo.py --clips auto --n 6   # only if demo clips are missing
+python scripts/update_manifest.py --require-video           # rebuild the dropdown
+python scripts/serve_dashboard.py --port 8000
+```
+
+Open <http://localhost:8000>. The clip dropdown is grouped:
+
+- **Phase IV — learned vs threshold system** — the current system. Pick one of
+  these first. The **MODEL COMPARISON** panel at the bottom shows the learned
+  risk head's per-frame probability (green) against the old threshold system's
+  (red) on the same clip, with Nexar's `time_of_alert` and `time_of_event`
+  marked and a triangle where each system fired. The console panel gives each
+  system's verdict and the explanation on intervention.
+- **Old system — clips with traffic** — the pre-Phase IV overlay demo (masks,
+  trails, predicted paths, event log). `dev04` is the busiest.
+- **Old system — sparse / near-empty** — dev clips filmed at empty junctions.
+  They track almost nothing and play as a near-blank overlay; they are listed
+  for completeness, not for demos.
+
+The `build_dashboard_demo.py` step is needed after a fresh clone because demo
+`raw.mp4` files are gitignored (~23 MB each) — only the small `risk.json`
+results are versioned. It needs `data/features/eval/` and
+`eval/anticipation/`; if you do not have those, skip to Path C.
+
+### Path C — reproduce the results end to end (needs the dataset; GPU for one step)
+
+Follow **`../handoff/REPRODUCE_BY_HAND.md`**. It covers dataset indexing and the
+split freeze, feature extraction (the only GPU step, ~3.5 h), training the
+learned risk head (~50 min, CPU-only by construction), choosing the operating
+point (seconds), and rebuilding the dashboard — with every command and the exact
+config values that produced the committed numbers.
+
+**Which system are you running?** Sections 4–13 below describe the
+**pre-Phase IV threshold pipeline** (`run_pipeline.py` → `events.json` →
+overlay). That still works and is still how the overlay clips are produced. The
+*current* system is the learned risk head; its runbook is
+`../handoff/REPRODUCE_BY_HAND.md`, and its metrics are `../design/metrics.md`
+§9–10.
 
 ---
 
@@ -46,7 +112,7 @@ video ─▶ perception+tracking (one fused YOLOv8-Seg model.track() call)
 | ~30 GB disk (if using the full Nexar dataset) | raw video clips | — |
 | Free Groq API key (optional) | only for the optional LLM explanation enrichment | https://console.groq.com/keys |
 
-A CPU-only machine works for **development and unit tests** (all 90 tests are
+A CPU-only machine works for **development and unit tests** (all 164 tests are
 CPU-only and data-free), but real clip processing / mining / eval runs need
 the GPU machine.
 
@@ -179,17 +245,32 @@ Useful flags: `--max-seconds 5` (quick tests), `--config` (alternate YAML).
 
 ## 7. View it in the dashboard
 
+Do **not** hand-write the manifest — regenerate it, so each clip gets a
+descriptive label and lands in the right dropdown group:
+
 ```powershell
-'["dev14", "dev11", "dev04"]' | Out-File -Encoding utf8 dashboard\clips\manifest.json
-python scripts\serve_dashboard.py
+python scripts\update_manifest.py --require-video
+python scripts\serve_dashboard.py --port 8000
 ```
 
-Open `http://localhost:8000`, pick a clip. You should see: masks colored
+`update_manifest.py` scans the clip folders, drops duplicates (e.g. `1118/` is
+the same footage as `dev04/`), and labels each clip with its actor density and
+event count so you can tell at a glance which are worth opening. `--require-video`
+excludes clips processed with `render=False`, which would otherwise play blank.
+
+Open `http://localhost:8000`, pick a clip from **Old system — clips with
+traffic** (`dev04` is the busiest). You should see: masks colored
 green→amber→red as risk rises, the event log filling with ALERT /
 VIRTUAL_BRAKE rows (each with its explanation sentence), the risk timeline
 with the threshold line, a red border flash after a VIRTUAL_BRAKE, and the
-▼ A3PS vs ▽ reactive-ADAS anticipation-gap markers. Pick a mix of positive
-and negative clips so the demo shows both an intervention and a clean run.
+▼ A3PS vs ▽ reactive-ADAS anticipation-gap markers.
+
+Clips under **Old system — sparse / near-empty** track almost nothing (several
+dev clips were filmed at empty junctions — `dev01` averages 0.00 actors/frame).
+A blank overlay there is the data, not a bug.
+
+For the **Phase IV** group — the learned risk head against this old threshold
+system on the same clip — see the quick start at the top of this file.
 
 ## 8. Mine trajectories (training data for the LSTM)
 
@@ -345,3 +426,8 @@ only: pick 4 road points + real-world distances, save
 | `pytest` failures on a fresh clone | broken env, not code | recreate the venv, reinstall requirements |
 | mining seems to redo some clips | zero-window clips write no shard | harmless; they re-track each run |
 | dashboard shows no events | clips processed before risk engine was wired, or negative clip | re-run step 6; pick a positive clip |
+
+
+git pull
+python scripts/build_dashboard_demo.py --clips auto --n 6
+python scripts/serve_dashboard.py --port 8000

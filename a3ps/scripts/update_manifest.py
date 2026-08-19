@@ -76,6 +76,61 @@ def count_events(events_json_path: str):
     return len(events)
 
 
+def clip_stats(events_json_path: str):
+    """(n_events, mean_actors_per_frame) for a clip, or (None, None).
+
+    Mean actor density is what decides whether a clip is worth putting in front
+    of someone: several dev clips were filmed at empty junctions and track
+    essentially nothing (dev01 averages 0.00 actors/frame), so they play as a
+    blank overlay and look like a broken dashboard rather than a quiet road.
+    """
+    try:
+        with open(events_json_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None, None
+    frames = data.get("frames") or []
+    events = data.get("events") or []
+    if not frames:
+        return len(events), 0.0
+    total = sum(len(f.get("tracks") or ()) for f in frames)
+    return len(events), total / len(frames)
+
+
+def risk_label(clip_dir: str, name: str):
+    """Dropdown label for a Phase IV comparison clip, or None if it isn't one.
+
+    Reads the small risk.json (not the huge events.json) and summarises the
+    contrast that makes the clip worth opening: whether it is a positive or
+    negative, and how each system judged it.
+    """
+    path = os.path.join(clip_dir, "risk.json")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            r = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    kind = "pos" if r.get("label") == 1 else "neg"
+    learned = (r.get("learned") or {}).get("verdict") or "?"
+    old = (r.get("threshold_system") or {}).get("verdict") or "?"
+    if learned == old:
+        contrast = f"both {learned}"
+    else:
+        contrast = f"learned {learned} / old {old}"
+    return f"{name} · {kind} · {contrast}"
+
+
+# Dropdown groups, in the order they should appear.
+G_PHASE4 = "Phase IV — learned vs threshold system"
+G_TRAFFIC = "Old system — clips with traffic"
+G_SPARSE = "Old system — sparse / near-empty"
+
+# Below this mean actors/frame a clip has almost nothing to show.
+SPARSE_ACTORS = 1.0
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Rebuild the dashboard clip manifest.")
     p.add_argument(
@@ -109,44 +164,79 @@ def main() -> None:
                        if os.path.isdir(os.path.join(clips_dir, n)))
     aliases = {} if args.keep_aliases else find_aliases(clips_dir, all_names)
 
-    clips = []       # (id, n_events) that pass the filter
+    clips = []       # {id, group, label, sort} that pass the filter
     skipped = []     # (id, reason) for transparency
     for name in all_names:
         clip_dir = os.path.join(clips_dir, name)
         if name in aliases:
             skipped.append((name, f"duplicate of {aliases[name]}"))
             continue
+
+        has_video = any(os.path.isfile(os.path.join(clip_dir, v))
+                        for v in ("annotated.mp4", "raw.mp4"))
+
+        # Phase IV comparison clips carry risk.json and deliberately ship WITHOUT
+        # events.json (that file is 20-50 MB and only the overlay needs it), so
+        # they must be recognised before the events.json requirement below.
+        label = risk_label(clip_dir, name)
+        if label is not None:
+            if args.require_video and not has_video:
+                skipped.append((name, "no video"))
+                continue
+            # Positives first (they carry the useful-vs-too-early contrast), then
+            # numerically by id so the order is stable and not "1004 before 488".
+            is_pos = " · pos · " in label
+            clips.append({"id": name, "group": G_PHASE4, "label": label,
+                          "sort": (0, 0 if is_pos else 1,
+                                   int(name) if name.isdigit() else 0, name)})
+            continue
+
         events_path = os.path.join(clip_dir, "events.json")
         if not os.path.isfile(events_path):
-            skipped.append((name, "no events.json"))
+            skipped.append((name, "no events.json and no risk.json"))
             continue
-        n = count_events(events_path)
+        n, actors = clip_stats(events_path)
         if n is None:
             skipped.append((name, "unreadable events.json"))
             continue
         if n < args.min_events:
             skipped.append((name, f"{n} events < min {args.min_events}"))
             continue
-        if args.require_video and not any(
-            os.path.isfile(os.path.join(clip_dir, v))
-            for v in ("annotated.mp4", "raw.mp4")
-        ):
+        if args.require_video and not has_video:
             skipped.append((name, "no video (eval-only clip)"))
             continue
-        clips.append((name, n))
 
-    # Most events first, then alphabetically -- demo-worthy clips at the top.
-    clips.sort(key=lambda c: (-c[1], c[0]))
-    ids = [name for name, _ in clips]
+        sparse = actors < SPARSE_ACTORS
+        if sparse:
+            desc = "empty" if actors < 0.05 else f"{actors:.1f} actors/frame"
+            clips.append({"id": name, "group": G_SPARSE,
+                          "label": f"{name} · {desc}", "sort": (2, -actors, name)})
+        else:
+            clips.append({
+                "id": name, "group": G_TRAFFIC,
+                "label": f"{name} · {actors:.1f} actors/frame · {n} events",
+                "sort": (1, -actors, name)})
+
+    # Phase IV clips first, then busiest overlay clips, then the sparse ones --
+    # so the dropdown opens on something worth looking at.
+    clips.sort(key=lambda c: c["sort"])
+    for c in clips:
+        c.pop("sort", None)
 
     manifest_path = os.path.join(clips_dir, "manifest.json")
     with open(manifest_path, "w", encoding="utf-8") as fh:
-        json.dump(ids, fh)
+        # Grouped/labelled form. app.js also accepts a plain array of ids, so an
+        # older manifest keeps working.
+        json.dump({"clips": clips}, fh, indent=1)
 
     print(f"Wrote {manifest_path}")
-    print(f"  {len(ids)} clip(s) listed (min-events={args.min_events}):")
-    for name, n in clips:
-        print(f"    {name:16s} {n} events")
+    print(f"  {len(clips)} clip(s) listed (min-events={args.min_events}):")
+    group = None
+    for c in clips:
+        if c["group"] != group:
+            group = c["group"]
+            print(f"    [{group}]")
+        print(f"      {c['label']}")
     if skipped:
         print(f"  {len(skipped)} skipped:")
         for name, reason in skipped:
