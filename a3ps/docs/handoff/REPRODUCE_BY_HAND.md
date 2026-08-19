@@ -20,19 +20,25 @@ config differs — check §7.
 |---|---|---|
 | training clips | 1,365 (685 pos / 680 neg) | `data/features/train_all/` |
 | held-out eval clips | 120 (60 pos / 60 neg), **frozen** | `data/features/eval/` |
-| best epoch | 5 | `eval/train_log.txt` |
-| useful-warning rate @ best epoch | 0.833 (50/60) | `eval/train_log.txt` |
-| **committed operating point** | **threshold 0.70, confirm 5** | `eval/operating_point_sweep.md` |
-| useful-warning @ operating point | 0.717 (43/60) | `eval/operating_point_sweep.md` |
-| false-alarm @ operating point | **0.167** ✅ (target ≤ 0.20) | `eval/operating_point_sweep.md` |
-| mean lead @ operating point | 1.58 s | `eval/operating_point_sweep.md` |
-| mean AP (500/1000/1500 ms) | 0.693 (0.795 / 0.708 / 0.575) | `eval/train_log.txt` |
-| checkpoint | 34,465 params | `notebooks/models/risk_gru_v1.pt` |
+| **checkpoint** | `risk_gru_k1p0.pt` — kappa 1.0, best epoch 8, 34,465 params | `notebooks/models/` |
+| **committed operating point** | **threshold 0.60, confirm 8** | `eval/kappa_comparison.md` |
+| useful-warning @ operating point | **0.750** (45/60) | `eval/operating_point_sweep_k1p0.md` |
+| false-alarm @ operating point | **0.167** ✅ (target ≤ 0.20) | `eval/operating_point_sweep_k1p0.md` |
+| mean lead @ operating point | 1.67 s (target 2–6 s — **not met**) | `eval/operating_point_sweep_k1p0.md` |
+| mean AP (500/1000/1500 ms) | 0.680 (0.785 / 0.697 / 0.557) | `eval/train_log_k1p0.txt` |
+| too-early alerts | 1/60 | `eval/operating_point_sweep_k1p0.md` |
 
-Documented alternative operating point: **0.60 / confirm 8** — useful 0.750,
-lead 1.84 s, FA 0.217. Better detection *and* lead, but FA is over target. We
-committed to 0.70/5 because a cleanly-met false-alarm target is the defensible
-headline; 0.60/8 is a legitimate choice if you are prepared to defend FA 0.217.
+**Against the old threshold system** on the same frozen split
+(`eval/phase4_comparison.md`): useful-warning **0.050 → 0.750**, false alarms
+**0.767 → 0.167**, mean AP **0.546 → 0.680**. The old system's raw detection rate
+was higher (0.917) only because it alerted on nearly everything, including 46 of
+60 negatives, firing before `time_of_alert` on 52 of 60 positives.
+
+Alternative operating points on the same checkpoint (see
+`eval/operating_point_sweep_k1p0.md`): **0.60 / confirm 3** gives useful 0.833 and
+lead 1.73 s at FA 0.300 — better on both, but FA is well over target. **0.70 / 5**
+gives FA 0.133 at useful 0.600. We committed to 0.60/8 because it is the highest
+useful-warning rate that still meets FA ≤ 0.20.
 
 ---
 
@@ -43,14 +49,15 @@ itself under `extra` (`torch.load(...)["extra"]`).
 
 | parameter | value | set where |
 |---|---|---|
-| `kappa` | **3.0** | `--kappa`, default `DEFAULT_KAPPA` in `a3ps/risk/anticipation_loss.py` |
-| `pre_alert_weight` | **0.5** | `--pre-alert-weight`, default `DEFAULT_PRE_ALERT_WEIGHT` same file |
+| `kappa` | **1.0** | `--kappa` (the file default is 3.0 — pass it explicitly) |
+| `pre_alert_weight` | **0.5** | `--pre-alert-weight`, default `DEFAULT_PRE_ALERT_WEIGHT` in `a3ps/risk/anticipation_loss.py` |
 | `pos_weight` | 1.0 | `--pos-weight` |
-| `threshold` (decision) | **0.70** | `--threshold` (eval-time only) |
-| `confirm` (frames) | **5** | `--confirm` (eval-time only) |
-| `epochs` | 30 (max) | `--epochs` |
+| `fa_target` | 0.20 | `--fa-target` (drives checkpoint selection) |
+| `threshold` (decision) | **0.60** | `--threshold` (eval-time only) |
+| `confirm` (frames) | **8** | `--confirm` (eval-time only) |
+| `epochs` | 30 (max; stopped at 16) | `--epochs` |
 | `patience` | 8 | `--patience` |
-| `batch_size` | 8 | `--batch-size` (see §8 — does not batch compute) |
+| `batch_size` | 8 | `--batch-size` |
 | `lr` | 1e-3 | `--lr` |
 | `weight_decay` | 1e-4 | `--weight-decay` |
 | `hidden` / `layers` / `dropout` | 64 / 1 / 0.1 | `--hidden --layers --dropout` |
@@ -169,12 +176,14 @@ Copy-Item data\features\train_neg\*.npz data\features\train_all\
 ```powershell
 python scripts/train_risk_head.py `
     --features data/features/train_all --val-features data/features/eval `
-    --epochs 30 --patience 8 --batch-size 8 `
-    --out notebooks/models/risk_gru_v1.pt `
-    --history-json eval/risk_gru_history.json *>&1 | Tee-Object eval/train_log.txt
+    --kappa 1.0 --pre-alert-weight 0.5 --pos-weight 1.0 --fa-target 0.20 `
+    --epochs 30 --patience 8 --batch-size 8 --seed 1234 `
+    --out notebooks/models/risk_gru_k1p0.pt `
+    --history-json eval/risk_gru_history_k1p0.json *>&1 `
+    | Tee-Object eval/train_log_k1p0.txt
 ```
 
-**Runtime ~2.2 min/epoch; ~50 min for 30 epochs**, less if early stopping fires.
+**Runtime ~45 s/epoch; ~12 min for a full run**, less when early stopping fires (ours stopped at epoch 16 of 30). The forward pass is batched — see §8.
 
 Watch it live:
 
@@ -193,8 +202,9 @@ Signs it worked:
 - Final block prints `best epoch N` with the useful-warning rate, FA, lead, and
   the three cutoff APs.
 
-Expect the best epoch to land early (ours was 5). Validation useful-warning
-oscillates a lot epoch to epoch — 0.833 → 0.550 → 0.717 is normal at this
+Expect the best epoch to land early (ours was 8). Validation useful-warning
+oscillates a lot epoch to epoch — the committed run went 0.800 → 0.767 → 0.567 →
+0.667 → 0.817 across epochs 4–8, which is normal at this
 dataset size; judge the run by its best, not its last.
 
 ---
@@ -205,10 +215,10 @@ Free, because `threshold`/`confirm` are applied after the model runs.
 
 ```powershell
 python scripts/sweep_operating_point.py `
-    --checkpoint notebooks/models/risk_gru_v1.pt `
+    --checkpoint notebooks/models/risk_gru_k1p0.pt `
     --features data/features/eval `
-    --thresholds 0.5,0.6,0.7,0.8,0.9,0.95 --confirms 3,5,8 `
-    --out eval/operating_point_sweep.md
+    --thresholds 0.5,0.6,0.7,0.8,0.9 --confirms 3,5,8 `
+    --out eval/operating_point_sweep_k1p0.md
 ```
 
 How to read the result:
@@ -271,30 +281,40 @@ Check in this order:
 2. **Feature rate** — all splits at the same `--rate-hz`? Check `rate_hz` in each `manifest.json` under `data/features/*/`.
 3. **`has_ego`** — if False anywhere, ego features are zeros for those clips.
 4. **kappa / pre_alert_weight** — read them back from the checkpoint:
-   `python -c "import torch; print(torch.load('notebooks/models/risk_gru_v1.pt', map_location='cpu', weights_only=False)['extra'])"`
+   `python -c "import torch; print(torch.load('notebooks/models/risk_gru_k1p0.pt', map_location='cpu', weights_only=False)['extra'])"`
 5. **Threshold/confirm** — the sweep table is only valid for the checkpoint named in its header.
 6. **Seed** — `--seed 1234` produced the committed numbers. Different seeds move the useful-warning rate by a few points at this dataset size.
 
 ---
 
-## 8. Known issues, deliberately not fixed
+## 8. Notes on the training implementation
 
-Both are documented tasks, not bugs to be surprised by.
+**The forward pass is batched (done — was a known issue).**
+[`train_risk_head.py`](../../scripts/train_risk_head.py) used to run
+`[model(c["X"]) for c in batch]`, one forward per clip, giving an effective batch
+size of 1. `batched_logits()` now pads each batch into one `(B, T_max, D)` tensor,
+runs a single forward and slices each clip's valid prefix back out — **measured
+6.14× faster** (75 s → 12 s per epoch).
 
-**`--batch-size` does not batch the compute.** [`train_risk_head.py`](../../scripts/train_risk_head.py)
-runs `logits = [model(c["X"]) for c in batch]` — one forward pass per clip in a
-Python loop. So the effective batch size is 1 and `--batch-size` only controls
-how many clips the loss aggregates over. Consequences: ~1.85× parallelism on 8
-cores instead of near-linear, and ~2.2 min/epoch where a properly batched
-version should manage well under a minute.
+No masking is needed in the loss, and end-padding is safe here for two specific
+reasons worth knowing before you change the model:
 
-To fix: pad each batch's clips to a common `T` into a real `(B, T, D)` tensor,
-run one forward, and mask the padding inside `batch_anticipation_loss` so padded
-timesteps contribute no loss. Expect roughly 5× faster training. **Verify by
-checking the loss matches the unbatched version on a fixed seed before trusting
-any number from it** — a masking bug here would silently change the objective
-rather than crash. Worth doing before a large hyperparameter sweep, since the
-speedup compounds across every run.
+* `RiskGRU` is **unidirectional**, so the output at step `t` depends only on steps
+  `≤ t`. Padding appended after a clip cannot influence any valid position.
+* Its input norm is `nn.LayerNorm(input_dim)`, which normalises across **features**
+  within each timestep independently. Padding adds timesteps, not features.
+
+**Swap in a bidirectional RNN, attention over the full sequence, or a BatchNorm /
+any norm over the time axis, and this breaks silently** — padded positions would
+leak into real ones and the objective would shift without any error.
+[`tests/test_train_risk_head.py`](../../tests/test_train_risk_head.py) guards it:
+logits, loss and **gradients** must all match the per-clip path exactly.
+
+**Checkpoint selection respects the false-alarm target.** Ranking is
+`(meets --fa-target, useful-warning, -FA)`, so an FA-compliant epoch always beats
+a non-compliant one and ties break toward lower false alarms. Previously it
+maximised useful-warning alone, which kept an epoch with worse FA over an
+equal-scoring better one.
 
 **ReID appearance embeddings are not implemented.** The tracker is Ultralytics
 BoT-SORT with `with_reid: False`, so no appearance embedding is ever computed.

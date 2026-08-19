@@ -4,51 +4,46 @@ Not required by anything committed. Ordered by expected value per unit effort, s
 working top-down is a reasonable default. Each entry says what it would buy, what
 it costs, and the specific risk that makes it non-trivial.
 
-For what to do **next**, see [`NEXT_STEPS.md`](NEXT_STEPS.md); the kappa retrain
-in [`KAPPA_RETRAIN.md`](KAPPA_RETRAIN.md) is the one genuinely prioritised item
-and is not repeated here.
+For what to do **next**, see [`NEXT_STEPS.md`](NEXT_STEPS.md). The kappa sweep is
+**done** and did not fix lead time, so the prioritised items are now capacity and
+window length — both listed under NEXT_STEPS step 1 rather than repeated here.
 
 ---
 
 ## Tier 1 — cheap, and likely to move a reported number
 
-### Batched training forward pass
+### ~~Batched training forward pass~~ — ✅ DONE
 
-**~1–2 h · CPU · ~5× faster training.**
-
-`--batch-size` does not batch the compute: `[model(c["X"]) for c in batch]` runs
-one forward per clip, giving effective batch size 1 and ~1.85× parallelism on 8
-cores. Pad each batch to a common `T` into a real `(B, T, D)` tensor, run one
-forward, and mask padding inside `batch_anticipation_loss`.
-
-**Risk:** a masking bug changes the objective silently instead of crashing.
-Verify the batched loss equals the unbatched loss on a fixed seed before trusting
-any result. Do this before any large sweep — the speedup compounds across runs.
+`batched_logits()` pads each batch into one `(B, T_max, D)` tensor and slices the
+valid prefixes back out. **Measured 6.14×** (75 s → 12 s per epoch). No loss
+masking was needed: the GRU is causal and its input norm is per-timestep, so
+end-padding cannot reach valid positions. Logits, loss and gradients are all
+asserted equal to the per-clip path in `tests/test_train_risk_head.py`.
 
 ### More model capacity
 
 **~1 h · CPU.**
 
-The head is 34,465 parameters (`--hidden 64 --layers 1`). Mean AP is 0.693 and is
+The head is 34,465 parameters (`--hidden 64 --layers 1`). Mean AP is 0.680 and is
 the ceiling no operating point can exceed, so if the model is underfitting, this
 is the cheapest way to raise it. Try `--hidden 128 --layers 2`, then `--hidden 256`.
 
+**This is now the top candidate for the open lead-time gap** — the kappa sweep
+showed mean AP is flat across loss weighting, which points at capacity or features
+rather than the objective. Training is ~4 min per run since the batching fix, so
+both sizes are ~15 min total.
+
 **Risk:** 1,365 training clips is small; larger capacity may simply overfit
 faster. Watch the gap between train loss and validation useful-warning — the
-existing run already peaked at epoch 5, which suggests overfitting is close.
-Keep `--patience` and judge by best epoch, not last.
+committed run already peaked at epoch 8 of 30. Keep `--patience` and judge by best
+epoch, not last.
 
-### Model selection that respects the false-alarm constraint
+### ~~Model selection respecting the false-alarm constraint~~ — ✅ DONE
 
-**~30 min · CPU.**
-
-Selection is currently `useful_warning_rate` alone, strictly greater. That
-discarded epoch 8 (useful 0.833, FA 0.550) in favour of epoch 5 (useful 0.833, FA
-0.583) — equal on the criterion, worse on the metric that decides publishability.
-See [`CHALLENGES.md`](CHALLENGES.md) §15.
-
-Change the criterion to useful-warning subject to `FA ≤ target`, or tie-break on
-FA. Cheap, and it makes every subsequent run select a better checkpoint.
+Selection is now `(meets --fa-target, useful-warning, -FA)`: a compliant epoch
+always beats a non-compliant one and ties break toward lower false alarms. It
+previously maximised useful-warning alone and discarded an equal-scoring epoch
+with better FA. See [`CHALLENGES.md`](CHALLENGES.md) §15.
 
 ### Kaggle submission for an external AP
 
@@ -71,13 +66,13 @@ submission format. Check the competition is still accepting submissions first.
 
 **GPU re-extraction ~4 h.**
 
-Features cover 13 s at 10 Hz (~130 timesteps). Mean lead is 1.58 s against a 2–6 s
+Features cover 13 s at 10 Hz (~130 timesteps). Mean lead is 1.67 s against a 2–6 s
 target; more run-up context may help the model commit earlier. Try
 `--window-s 20 --tail-s 1`.
 
 **Risk:** a full re-extraction, and the result is not comparable to anything
-measured on 13 s windows unless you re-run the eval split too. Do the kappa sweep
-first — it targets the same weakness for a fraction of the cost.
+measured on 13 s windows unless you re-run the eval split too. Try capacity first
+— same target, minutes instead of hours.
 
 ### Per-actor temporal head
 
@@ -150,7 +145,7 @@ means each arm needs its own matched eval extraction.
 A small causal transformer instead of the GRU, matching the Phase III forecaster's
 architecture family. Would let the head attend over the full 13 s window rather
 than carrying state. At 130 timesteps and 1,365 clips the GRU is unlikely to be
-the bottleneck — mean AP 0.693 more plausibly reflects feature quality — so treat
+the bottleneck — mean AP 0.680 more plausibly reflects feature quality — so treat
 this as a comparison point rather than an expected win.
 
 ### BEV per-clip calibration

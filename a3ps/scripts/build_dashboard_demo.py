@@ -9,7 +9,7 @@ timing markers, so the dashboard can show the Phase IV improvement instead of
 only asserting it:
 
 * ``learned``   -- the trained GRU's per-frame risk probability, and the alert it
-  fires at the committed operating point (threshold 0.70, confirm 5).
+  fires at the committed operating point (threshold 0.60, confirm 8).
 * ``threshold`` -- the OLD system's per-frame max collision probability and every
   ALERT/VIRTUAL_BRAKE it fired, read from the cached ``eval/anticipation``
   output. This is a real previous run, not a re-simulation.
@@ -48,12 +48,15 @@ from a3ps.explain.templates import explain as template_explain  # noqa: E402
 from a3ps.risk.anticipation_loss import first_alert_time  # noqa: E402
 from a3ps.risk.temporal import RiskGRU  # noqa: E402
 
-# The committed operating point (see eval/operating_point_sweep.md). 0.70/5 is
-# the best row meeting the false-alarm target of <= 0.20: FA 0.167, useful 0.717,
-# mean lead 1.58 s. 0.60/8 is the documented alternative (better detection and
-# lead, FA 0.217 -- slightly over target).
-DEFAULT_THRESHOLD = 0.70
-DEFAULT_CONFIRM = 5
+# The committed operating point, from the kappa sweep (eval/kappa_comparison.md
+# and eval/operating_point_sweep_k1p0.md). The kappa=1.0 checkpoint at
+# threshold 0.60 / confirm 8 is the best row meeting the <= 0.20 false-alarm
+# target: FA 0.167, useful 0.750, mean lead 1.67 s.
+#
+# It replaced the earlier kappa=3.0 model at 0.70/5 (FA 0.167, useful 0.717,
+# lead 1.58 s) -- strictly better on useful-warning and lead at identical FA.
+DEFAULT_THRESHOLD = 0.60
+DEFAULT_CONFIRM = 8
 
 ALERT_TYPES = ("ALERT", "VIRTUAL_BRAKE")
 
@@ -409,7 +412,7 @@ def pick_auto(index, args, n):
 def main():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--checkpoint", default="notebooks/models/risk_gru_v1.pt")
+    p.add_argument("--checkpoint", default="notebooks/models/risk_gru_k1p0.pt")
     p.add_argument("--features", default="data/features/eval")
     p.add_argument("--cached-dir", default="eval/anticipation",
                    help="Cached OLD-system output (<clip>/events.json).")

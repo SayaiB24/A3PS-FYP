@@ -1,11 +1,39 @@
 # Kappa retrain runbook — fixing lead time
 
-**Status: not done. This is the top-priority next improvement.**
+> ## ✅ DONE (2026-08-19) — and it did not fix lead time
+>
+> Ran kappa ∈ {0.5, 1.0, 2.0, 3.0}, swept each checkpoint's operating point, and
+> applied the §5 decision rule. Results in `eval/kappa_comparison.md`.
+>
+> | kappa | requested lead | best passing row | useful | FA | mean lead | mean AP |
+> |---|---|---|---|---|---|---|
+> | 0.5 | 1.60 s | *none passes* | — | — | — | 0.636 |
+> | **1.0** | 1.46 s | **thr 0.60 / confirm 8** | **0.750** | **0.167** | **1.67 s** | 0.680 |
+> | 2.0 | 1.20 s | thr 0.60 / confirm 5 | 0.767 | 0.183 | 1.59 s | 0.678 |
+> | 3.0 | 0.98 s | thr 0.60 / confirm 5 | 0.783 | 0.183 | 1.63 s | 0.676 |
+>
+> **kappa 1.0 won on the rule** and is the committed model
+> (`notebooks/models/risk_gru_k1p0.pt`). Against the previous kappa 3.0 model at
+> identical FA it is a modest real gain: useful 0.717 → 0.750, lead 1.58 → 1.67 s.
+>
+> **But the hypothesis was largely wrong.** Lead time moved only 1.59–1.67 s
+> across the whole sweep, nowhere near the 2–6 s target, and **mean AP stayed flat
+> within 0.004**. A parameter that changes only *when* the model fires leaving
+> discrimination unmoved is the signature of a **capacity/feature ceiling, not a
+> loss-weighting problem** — exactly the outcome §5 said to report rather than
+> bury. Lower kappa at 0.5 made things worse: no operating point passed the gates
+> at all.
+>
+> **Do not re-run this sweep.** The next levers are capacity
+> (`--hidden 128 --layers 2`), a longer feature window, or better features — see
+> [`FUTURE_WORK.md`](FUTURE_WORK.md) Tier 1. The rest of this file is kept as the
+> method: it is the template for any future loss-parameter sweep, and §6's failure
+> modes still apply.
 
 Standalone: everything needed to run the whole sweep and pick a winner is in
 this file plus the repo. No assistant required.
 
-- **Cost:** ~21 min per kappa value, 3 values → **~1 h 5 min total**, CPU only.
+- **Cost:** ~4 min per kappa value now that the forward pass is batched (was ~21 min).
 - **No GPU, no re-extraction.** Reuses the existing `.npz` features unchanged.
 - **Safe to interrupt:** each run saves its best checkpoint the moment it appears.
 

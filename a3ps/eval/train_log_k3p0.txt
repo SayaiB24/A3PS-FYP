@@ -1,0 +1,41 @@
+train 1365 clips (685 pos) | val 120 clips (60 pos)
+feature width 112
+RiskGRU hidden=64 layers=1 params=34,465 (causality check passed)
+loss: kappa=3.0 pre_alert_weight=0.5 -> asks for a warning ~0.98s before impact on a mean-lead clip
+
+epoch   1  loss 0.7305  val useful 0.433 (26/60, 32 early)  mAP 0.666  FA 0.750  lead 3.96s  <- best
+           saved best (epoch 1) -> notebooks/models/risk_gru_k3p0.pt
+epoch   2  loss 0.5249  val useful 0.483 (29/60, 30 early)  mAP 0.680  FA 0.850  lead 3.61s  <- best
+           saved best (epoch 2) -> notebooks/models/risk_gru_k3p0.pt
+epoch   3  loss 0.4620  val useful 0.433 (26/60, 34 early)  mAP 0.727  FA 0.917  lead 3.90s
+epoch   4  loss 0.4403  val useful 0.750 (45/60, 2 early)  mAP 0.642  FA 0.400  lead 1.49s  <- best
+           saved best (epoch 4) -> notebooks/models/risk_gru_k3p0.pt
+epoch   5  loss 0.4221  val useful 0.783 (47/60, 9 early)  mAP 0.698  FA 0.583  lead 2.32s  <- best
+           saved best (epoch 5) -> notebooks/models/risk_gru_k3p0.pt
+epoch   6  loss 0.4032  val useful 0.550 (33/60, 27 early)  mAP 0.707  FA 0.867  lead 3.30s
+epoch   7  loss 0.3988  val useful 0.717 (43/60, 17 early)  mAP 0.719  FA 0.750  lead 2.71s
+epoch   8  loss 0.3755  val useful 0.800 (48/60, 5 early)  mAP 0.676  FA 0.483  lead 2.00s  <- best
+           saved best (epoch 8) -> notebooks/models/risk_gru_k3p0.pt
+epoch   9  loss 0.3565  val useful 0.617 (37/60, 23 early)  mAP 0.709  FA 0.867  lead 3.18s
+epoch  10  loss 0.3608  val useful 0.633 (38/60, 21 early)  mAP 0.708  FA 0.833  lead 2.98s
+epoch  11  loss 0.3584  val useful 0.750 (45/60, 13 early)  mAP 0.704  FA 0.717  lead 2.68s
+epoch  12  loss 0.3512  val useful 0.633 (38/60, 21 early)  mAP 0.675  FA 0.917  lead 3.05s
+epoch  13  loss 0.3414  val useful 0.733 (44/60, 14 early)  mAP 0.717  FA 0.733  lead 2.72s
+epoch  14  loss 0.3331  val useful 0.717 (43/60, 16 early)  mAP 0.715  FA 0.667  lead 2.76s
+epoch  15  loss 0.3337  val useful 0.617 (37/60, 23 early)  mAP 0.709  FA 0.783  lead 3.02s
+epoch  16  loss 0.3133  val useful 0.650 (39/60, 19 early)  mAP 0.714  FA 0.767  lead 2.99s
+
+early stop: no improvement for 8 epoch(s) (best was epoch 8 at 0.800). Stopping at epoch 16/30.
+
+trained in 257s
+
+best epoch 8:
+  useful-warning rate : 0.800 (48/60; 5 fired too early)
+  false-alarm rate    : 0.483
+  mean lead time      : 2.00 s
+  AP @ -500 ms      : 0.788
+  AP @ -1000 ms      : 0.687
+  AP @ -1500 ms      : 0.553
+  mean AP             : 0.676
+           saved best (epoch 8) -> notebooks/models/risk_gru_k3p0.pt
+wrote eval/risk_gru_history_k3p0.json

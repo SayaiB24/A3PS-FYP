@@ -351,7 +351,8 @@ If you'd rather train there while you have the data local:
 ```powershell
 python scripts/train_risk_head.py `
     --features data/features/train_neg --val-features data/features/eval `
-    --epochs 40 --batch-size 16 --out notebooks/models/risk_gru_v1.pt `
+    --kappa 1.0 --epochs 30 --patience 8 --batch-size 8 `
+    --out notebooks/models/risk_gru_k1p0.pt `
     --history-json eval/risk_gru_history.json
 ```
 

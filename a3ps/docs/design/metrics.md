@@ -454,7 +454,7 @@ outputs; never mix pre- and post-addition numbers in one table.
 python scripts/train_risk_head.py `
     --features data/features/train_all --val-features data/features/eval `
     --epochs 30 --patience 8 --batch-size 8 `
-    --out notebooks/models/risk_gru_v1.pt `
+    --out notebooks/models/risk_gru_k1p0.pt `
     --history-json eval/risk_gru_history.json *>&1 | Tee-Object eval/train_log.txt
 ```
 
@@ -478,12 +478,12 @@ python scripts/train_risk_head.py `
 
 **✅ Expected good outcome:**
 - **False-alarm rate ≤ 0.20 is the gatekeeper.** Check it before anything else; a high useful-warning rate at high FA is not a result.
-- **useful-warning ≥ 0.75** at that FA (committed result: 0.717 — marginally short).
-- **mean lead 2–6 s** (committed result: 1.58 s — short; this is the known gap, and `kappa` is the lever, see `docs/handoff/KAPPA_RETRAIN.md`).
-- **mean AP** — committed 0.693. This is the ceiling no threshold can exceed; raising it needs better features or capacity.
+- **useful-warning ≥ 0.75** at that FA (committed result: 0.750 — met).
+- **mean lead 2–6 s** (committed result: 1.67 s — short. The kappa sweep is done and did NOT fix it: lead moved only 1.59-1.67 s across kappa in {0.5,1,2,3} while mean AP stayed flat within 0.004, so the ceiling is discrimination, not loss weighting).
+- **mean AP** — committed 0.680 (old threshold system: 0.546). This is the ceiling no threshold can exceed; raising it needs better features or capacity.
 - Best epoch landing early (ours: 5 of 30) is normal. Validation useful-warning oscillating ±0.2 between epochs is normal at 120 val clips — **judge a run by its best epoch, never its last**.
 
-**⚠️ Model selection currently ignores false-alarm rate.** It maximises useful-warning alone with a strict `>`, so it discarded an epoch with equal useful-warning and *better* FA. Compensate by re-choosing the operating point afterwards (§10).
+**Model selection respects the false-alarm target** (fixed): ranking is `(meets --fa-target, useful-warning, -FA)`, so a compliant epoch always beats a non-compliant one and ties break toward lower FA. It previously maximised useful-warning alone and discarded an epoch with equal useful-warning and better FA.
 
 ---
 
@@ -493,7 +493,7 @@ python scripts/train_risk_head.py `
 
 ```powershell
 python scripts/sweep_operating_point.py `
-    --checkpoint notebooks/models/risk_gru_v1.pt `
+    --checkpoint notebooks/models/risk_gru_k1p0.pt `
     --features data/features/eval `
     --thresholds 0.5,0.6,0.7,0.8,0.9,0.95 --confirms 3,5,8 `
     --out eval/operating_point_sweep.md
@@ -509,7 +509,7 @@ python scripts/sweep_operating_point.py `
 - **Lead time is the price.** Raising threshold or confirm buys FA back by alerting later. **A row that fixes FA by collapsing lead below ~1 s has solved nothing.**
 - **Pick:** highest useful-warning subject to FA ≤ 0.20 **and** lead ≥ ~1.5 s.
 
-**Committed operating point: threshold 0.70, confirm 5** → useful 0.717, FA 0.167 ✅, lead 1.58 s. Documented alternative **0.60 / confirm 8** → useful 0.750, lead 1.84 s, FA 0.217 (over target, but better detection and lead).
+**Committed operating point: kappa 1.0 checkpoint at threshold 0.60, confirm 8** → useful 0.750, FA 0.167 ✅, lead 1.67 s, mean AP 0.680. Documented alternative **0.60 / confirm 8** → useful 0.750, lead 1.84 s, FA 0.217 (over target, but better detection and lead).
 
 **What this sweep revealed:** premature alarms were a **threshold artefact**, not a loss deficiency — too-early alerts fell 5 → 1 and FA fell 0.583 → 0.167 purely by raising the threshold, with no retraining. A planned `pre_alert_weight` sweep was aimed at an already-solved problem.
 

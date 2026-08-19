@@ -21,13 +21,26 @@ it against the old system. Full reproduction steps:
 
 | quantity | value | vs target |
 |---|---|---|
-| checkpoint | `notebooks/models/risk_gru_v1.pt` (34,465 params, best epoch 5) | — |
-| operating point | threshold 0.70, confirm 5 | — |
+| checkpoint | `notebooks/models/risk_gru_k1p0.pt` (34,465 params, kappa 1.0, best epoch 8) | — |
+| operating point | threshold 0.60, confirm 8 | — |
 | false-alarm rate | **0.167** | ✅ ≤ 0.20 |
-| useful-warning rate | 0.717 (43/60) | marginally short of 0.75 |
-| mean lead time | 1.58 s | ✗ short of 2–6 s — **the open gap** |
-| mean AP | 0.693 (0.795 / 0.708 / 0.575 @ 500/1000/1500 ms) | ceiling; threshold cannot raise it |
-| tests | 164 passing | — |
+| useful-warning rate | **0.750** (45/60) | ✅ meets 0.75 |
+| mean lead time | 1.67 s | ✗ short of 2–6 s — **the open gap** |
+| mean AP | 0.680 (0.785 / 0.697 / 0.557 @ 500/1000/1500 ms) | ceiling; threshold cannot raise it |
+| too-early alerts | 1/60 | ✅ |
+| tests | 170 passing | — |
+
+**vs the old threshold system**, same frozen split (`eval/phase4_comparison.md`):
+
+| metric | threshold system | learned head |
+|---|---|---|
+| useful-warning rate | 0.050 (3/60) | **0.750 (45/60)** |
+| false-alarm rate | 0.767 | **0.167** |
+| mean AP | 0.546 | **0.680** |
+| fired before `time_of_alert` | 52/60 | 1/60 |
+
+The old system's raw detection rate was higher (0.917 vs 0.750) only because it
+alerted on nearly everything — including 46 of 60 negatives.
 
 ### ✅ Done since the pivot
 
@@ -43,18 +56,27 @@ it against the old system. Full reproduction steps:
 - [x] **Dashboard** — learned head vs old threshold system on the same clip, ground-truth markers, verdicts, explanation on intervention, slim overlays (0.1–2.4 MB vs 20–50 MB), grouped dropdown, correct threshold readout, self-explaining failure states.
 - [x] **Handoff docs** — [`../handoff/`](../handoff/): reproduce-by-hand, next steps, kappa runbook, 19 challenges, future work; plus `metrics.md` §9–10 and a quick start in `execution.md`.
 
+### ✅ Also done (2026-08-19, later)
+
+- [x] **Kappa sweep** — trained kappa ∈ {0.5, 1.0, 2.0, 3.0}, swept the operating point for each, picked by the documented rule. **kappa 1.0 wins** and is now the committed model. Results: `eval/kappa_comparison.md`.
+- [x] **Batched forward pass** — `batched_logits()`, **6.14× faster** (75 s → 12 s per epoch), verified against the per-clip path on logits, loss *and* gradients.
+- [x] **FA-aware checkpoint selection** — ranking is `(meets --fa-target, useful-warning, -FA)`.
+- [x] **Paper tables regenerated** — `eval/anticipation.md`, `eval/paper_stats_summary.md`, plus the new `eval/phase4_comparison.md` head-to-head.
+
+**Kappa outcome, stated honestly:** lowering kappa did **not** fix lead time.
+Across all four values lead moved only 1.59–1.67 s against a 2–6 s target, and
+mean AP stayed flat within 0.004. A parameter that changes only *when* the model
+fires leaving AP unmoved means the ceiling is the model's **discrimination** — a
+feature/capacity limit, not a loss-tuning one. kappa 1.0 still won on the stated
+rule and gave a modest real gain over the previous kappa 3.0 model at identical
+FA: useful 0.717 → 0.750, lead 1.58 → 1.67 s.
+
 ### ⬜ Remaining — see [`../handoff/NEXT_STEPS.md`](../handoff/NEXT_STEPS.md)
 
-1. **Kappa retrain** ⭐ — lead time is the only missed target; `kappa=3.0` asks the loss for a warning only ~0.98 s before impact, so it trained a detector rather than an anticipator. ~1 h, CPU, no re-extraction. Runbook: [`../handoff/KAPPA_RETRAIN.md`](../handoff/KAPPA_RETRAIN.md).
-2. **Regenerate the paper tables** — `eval/anticipation.md` and the paper artefacts still describe the old threshold system.
-3. **Write the numbers up honestly** — quote 0.717 @ FA 0.167, not the 0.833 that was measured at an unusable FA 0.583; state that lead time misses target.
-4. **Two known issues, deliberately unfixed** — `--batch-size` does not batch the compute (~5× speedup available, needs loss masking and verification); model selection ignores false-alarm rate.
-5. **Optional** — see [`../handoff/FUTURE_WORK.md`](../handoff/FUTURE_WORK.md).
-
-**Two caveats for the writeup:** the learned head is scored on 13 s windows at
-10 Hz while the old system was scored on full clips at 30 Hz — not identical
-observation conditions. And mean AP 0.693 is a ceiling no operating point can
-exceed; raising it needs better features or capacity.
+1. **Lead time still misses target** (1.67 s vs 2–6 s). Kappa is exhausted as a lever. Next candidates in order: **more capacity** (`--hidden 128 --layers 2`, ~15 min now that training is 6× faster), **a longer feature window** (20 s, needs a GPU re-extraction), or **better features**. See [`../handoff/FUTURE_WORK.md`](../handoff/FUTURE_WORK.md) Tier 1.
+2. **Write the numbers up** — quote 0.750 @ FA 0.167, and state that lead time is not met. Never quote a useful-warning rate without the false-alarm rate it was measured at.
+3. **Strict old-vs-new comparison** — the two systems are scored under different observation conditions (13 s @ 10 Hz vs full clips @ 30 Hz). Re-running the threshold system on matched windows would make it exact; until then quote the useful-warning and AP gains (robust to this) rather than the lead-time difference (not).
+4. **Optional** — see [`../handoff/FUTURE_WORK.md`](../handoff/FUTURE_WORK.md): Kaggle submission for an external AP, ReID arm, per-actor head, BEV calibration, user study.
 
 ---
 
@@ -204,7 +226,7 @@ Summarised in "Status at a glance" above; full detail in the handoff docs.
 
 ### B2. Superseded / deferred
 
-- [x] ~~Tune the old threshold system to a defensible operating point~~ — superseded: the learned head now provides the operating point (0.70/5, FA 0.167).
+- [x] ~~Tune the old threshold system to a defensible operating point~~ — superseded: the learned head now provides the operating point (0.60/8, FA 0.167).
 - [ ] **Per-clip BEV calibration** for the final demo clips (`ground.yaml`, `forecast_space: bev`, `verify_bev.py`). Still worthwhile for interpretability — it makes distances metric instead of pixel stand-ins — but it affects no headline metric. Deferred, listed in `../handoff/FUTURE_WORK.md`.
 - [ ] Re-mine trajectories in BEV metres if the LSTM is ever to train in metric space. Only relevant to the Phase III forecaster, which the learned head now consumes as a feature rather than depending on directly.
 - [x] ~~Pick + polish demo clips~~ — done: 6 Phase IV comparison clips (621, 488, 1004, 690, 1085, 1261) built by `scripts/build_dashboard_demo.py`, chosen for the sharpest old-vs-new contrast.

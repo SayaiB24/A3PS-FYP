@@ -1,0 +1,86 @@
+[
+  {
+    "epoch": 1,
+    "train_loss": 0.7427212191604035,
+    "val_useful": 0.25,
+    "val_mean_AP": 0.6707638915142152,
+    "val_false_alarm": 0.7833333333333333
+  },
+  {
+    "epoch": 2,
+    "train_loss": 0.5456239116644999,
+    "val_useful": 0.5333333333333333,
+    "val_mean_AP": 0.6857963954683973,
+    "val_false_alarm": 0.7833333333333333
+  },
+  {
+    "epoch": 3,
+    "train_loss": 0.4838950398721193,
+    "val_useful": 0.7,
+    "val_mean_AP": 0.6749938771746798,
+    "val_false_alarm": 0.9166666666666666
+  },
+  {
+    "epoch": 4,
+    "train_loss": 0.46541258135037117,
+    "val_useful": 0.7666666666666667,
+    "val_mean_AP": 0.636437413653979,
+    "val_false_alarm": 0.4
+  },
+  {
+    "epoch": 5,
+    "train_loss": 0.4492082157504489,
+    "val_useful": 0.7333333333333333,
+    "val_mean_AP": 0.6918891323253109,
+    "val_false_alarm": 0.65
+  },
+  {
+    "epoch": 6,
+    "train_loss": 0.438904501192751,
+    "val_useful": 0.5666666666666667,
+    "val_mean_AP": 0.7047292793025098,
+    "val_false_alarm": 0.8333333333333334
+  },
+  {
+    "epoch": 7,
+    "train_loss": 0.4298754782356017,
+    "val_useful": 0.65,
+    "val_mean_AP": 0.704746385999965,
+    "val_false_alarm": 0.8333333333333334
+  },
+  {
+    "epoch": 8,
+    "train_loss": 0.4090357345272923,
+    "val_useful": 0.7666666666666667,
+    "val_mean_AP": 0.6869293048318843,
+    "val_false_alarm": 0.5
+  },
+  {
+    "epoch": 9,
+    "train_loss": 0.39127683534956814,
+    "val_useful": 0.65,
+    "val_mean_AP": 0.7128694875549909,
+    "val_false_alarm": 0.75
+  },
+  {
+    "epoch": 10,
+    "train_loss": 0.3949320101947115,
+    "val_useful": 0.6166666666666667,
+    "val_mean_AP": 0.7083208870135325,
+    "val_false_alarm": 0.8666666666666667
+  },
+  {
+    "epoch": 11,
+    "train_loss": 0.3983081458953389,
+    "val_useful": 0.6833333333333333,
+    "val_mean_AP": 0.6965464583417131,
+    "val_false_alarm": 0.7666666666666667
+  },
+  {
+    "epoch": 12,
+    "train_loss": 0.39003382954332566,
+    "val_useful": 0.5666666666666667,
+    "val_mean_AP": 0.6715828788457952,
+    "val_false_alarm": 0.95
+  }
+]

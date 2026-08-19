@@ -21,14 +21,15 @@ which matters before quoting any number.
 
 | quantity | value |
 |---|---|
-| checkpoint | `notebooks/models/risk_gru_v1.pt` (34,465 params, best epoch 5) |
+| checkpoint | `notebooks/models/risk_gru_k1p0.pt` (34,465 params, kappa 1.0, best epoch 8) |
 | training data | 1,365 clips (685 pos / 680 neg), real ego motion on all |
 | held-out eval | 120 clips (60/60), **frozen** — `eval/split_freeze.json` |
-| **operating point** | **threshold 0.70, confirm 5** |
-| useful-warning | 0.717 (43/60) |
+| **operating point** | **threshold 0.60, confirm 8** |
+| useful-warning | 0.750 (45/60) |
 | false-alarm | **0.167** ✅ (target ≤ 0.20) |
-| mean lead | 1.58 s (target 2–6 s — **the known gap**) |
-| mean AP | 0.693 (0.795 / 0.708 / 0.575 @ 500 / 1000 / 1500 ms) |
+| mean lead | 1.67 s (target 2–6 s — **the known gap**) |
+| vs old system | useful 0.050 → **0.750**, FA 0.767 → **0.167**, AP 0.546 → **0.680** |
+| mean AP | 0.680 (0.785 / 0.697 / 0.557 @ 500 / 1000 / 1500 ms) |
 
 ## The three things most likely to trip you up
 
@@ -42,9 +43,10 @@ which matters before quoting any number.
    checkpoint in seconds. Only retrain when you've exhausted them.
    ([CHALLENGES.md](CHALLENGES.md) §14)
 
-3. **Quote the pairing, not the best single number.** useful-warning 0.833 was
-   measured at FA 0.583, which is unusable. The honest result is **0.717 at FA
-   0.167**. False-alarm rate validates everything else.
+3. **Quote the pairing, not the best single number.** A useful-warning rate is
+   meaningless without the false-alarm rate it was measured at — 0.833 is
+   available on this checkpoint at FA 0.300, which is unusable. The honest result
+   is **0.750 at FA 0.167**. False-alarm rate validates everything else.
 
 ## Launching the dashboard
 
