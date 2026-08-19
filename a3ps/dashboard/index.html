@@ -40,6 +40,12 @@
 
       <div id="threshold" class="threshold">Threshold: –</div>
 
+      <section class="panel hidden" id="compare-panel">
+        <h3>Learned head vs threshold system</h3>
+        <div id="compare-rows" class="compare-rows"></div>
+        <div id="compare-explain" class="compare-explain"></div>
+      </section>
+
       <section class="panel grow">
         <h3>Event log</h3>
         <ul id="event-log" class="event-log"><li class="empty">no events</li></ul>
@@ -53,6 +59,19 @@
       <span id="gap-label" class="gap-label"></span>
     </div>
     <canvas id="risk-timeline"></canvas>
+
+    <div id="compare-wrap" class="hidden">
+      <div class="timeline-head">
+        <span>MODEL COMPARISON</span>
+        <span class="legend">
+          <i class="sw learned"></i> learned head (GRU)
+          <i class="sw old"></i> threshold system
+          <i class="sw gt-alert"></i> time_of_alert
+          <i class="sw gt-event"></i> time_of_event
+        </span>
+      </div>
+      <canvas id="model-compare"></canvas>
+    </div>
     <div class="controls">
       <button id="btn-back" title="back 1s">◀◀</button>
       <button id="btn-play" title="play/pause">▶</button>

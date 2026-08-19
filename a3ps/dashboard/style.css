@@ -158,3 +158,45 @@ main {
 .controls button:hover { border-color: var(--accent); }
 #scrubber { flex: 1; accent-color: var(--accent); }
 .time-readout { font-family: ui-monospace, monospace; font-size: .8rem; color: var(--muted); min-width: 110px; text-align: right; }
+
+/* ---- Phase IV: learned head vs threshold system ---- */
+
+/* Legend beside the MODEL COMPARISON heading. */
+.legend { display: flex; align-items: center; gap: .7rem; color: var(--muted); font-size: .7rem; }
+.legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: .25rem; vertical-align: -1px; }
+.legend .sw.learned  { background: var(--safe); }
+.legend .sw.old      { background: var(--danger); }
+.legend .sw.gt-alert { background: #4aa3f0; }
+.legend .sw.gt-event { background: var(--text); }
+
+#model-compare { display: block; width: 100%; height: 96px; }
+
+/* Verdict rows in the console panel. */
+.compare-rows { display: flex; flex-direction: column; gap: .3rem; }
+.cmp-row {
+  display: grid; grid-template-columns: 1fr auto; gap: .15rem .5rem;
+  padding: .35rem .45rem; border-radius: 6px;
+  background: var(--panel2); border: 1px solid var(--border);
+}
+.cmp-name { font-size: .78rem; color: var(--text); }
+.cmp-verdict {
+  font-size: .72rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .03em; justify-self: end; color: var(--muted);
+}
+.cmp-verdict.good { color: var(--safe); }
+.cmp-verdict.bad  { color: var(--danger); }
+.cmp-when { grid-column: 1 / -1; font-size: .7rem; color: var(--muted); font-family: ui-monospace, monospace; }
+.cmp-foot { margin-top: .2rem; font-size: .68rem; color: var(--muted); line-height: 1.4; }
+
+.compare-explain { margin-top: .5rem; }
+.cmp-expl-label {
+  font-size: .65rem; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--muted); margin-bottom: .2rem;
+}
+.cmp-expl-text {
+  font-size: .76rem; line-height: 1.45; color: var(--text);
+  background: var(--panel2); border: 1px solid var(--border);
+  border-left: 2px solid var(--safe);
+  border-radius: 4px; padding: .4rem .5rem;
+}
+.cmp-expl-text.muted { color: var(--muted); border-left-color: var(--border); }

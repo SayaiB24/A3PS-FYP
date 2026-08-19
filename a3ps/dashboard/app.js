@@ -19,6 +19,11 @@ const els = {
   eventLog: $("event-log"),
   timeline: $("risk-timeline"),
   gapLabel: $("gap-label"),
+  compareWrap: $("compare-wrap"),
+  compare: $("model-compare"),
+  comparePanel: $("compare-panel"),
+  compareRows: $("compare-rows"),
+  compareExplain: $("compare-explain"),
   scrubber: $("scrubber"),
   timeReadout: $("time-readout"),
   btnBack: $("btn-back"),
@@ -44,6 +49,7 @@ const state = {
   duration: 0,
   log: [],                 // rendered event-log entries (occurred events)
   userScrolledUp: false,   // suppress auto-scroll when the user scrolled up
+  risk: null,              // clips/<id>/risk.json — learned-vs-threshold comparison
 };
 
 const nowMs = () => performance.now();
@@ -132,14 +138,30 @@ async function loadClip(id) {
   Object.assign(state, {
     frames: [], events: [], perFrameRisk: [], thresholdSeries: [],
     currentIndex: -1, currentFrame: null, reactiveMarkers: [],
-    log: [], userScrolledUp: false,
+    log: [], userScrolledUp: false, risk: null,
   });
+
+  // events.json carries the full per-frame track state and drives the video
+  // overlay. It is ~20-50 MB per clip, so the learned-head demo clips ship
+  // WITHOUT it (they only need risk.json). A missing file is therefore normal,
+  // not an error: the overlay simply stays empty for those clips.
   try {
-    const clip = await (await fetch(`clips/${id}/events.json`, { cache: "no-store" })).json();
-    state.meta = clip.meta || {};
-    state.frames = (clip.frames || []).slice().sort((a, b) => a.t - b.t);
-    state.events = (clip.events || []).slice().sort((a, b) => a.t - b.t);
-  } catch (e) { console.error(`load ${id} failed`, e); }
+    const res = await fetch(`clips/${id}/events.json`, { cache: "no-store" });
+    if (res.ok) {
+      const clip = await res.json();
+      state.meta = clip.meta || {};
+      state.frames = (clip.frames || []).slice().sort((a, b) => a.t - b.t);
+      state.events = (clip.events || []).slice().sort((a, b) => a.t - b.t);
+    }
+  } catch (e) { console.warn(`no overlay data for ${id}`, e); }
+
+  // risk.json is the Phase IV comparison payload (learned curve + the old
+  // threshold system's curve + ground-truth markers). Also optional: the
+  // original dev clips predate it.
+  try {
+    const res = await fetch(`clips/${id}/risk.json`, { cache: "no-store" });
+    if (res.ok) state.risk = await res.json();
+  } catch (e) { console.warn(`no risk.json for ${id}`, e); }
 
   // Derived series.
   state.perFrameRisk = state.frames.map((f) =>
@@ -152,8 +174,12 @@ async function loadClip(id) {
     (f.context && f.context.active_threshold != null) ? f.context.active_threshold : base);
   state.threshold = state.thresholdSeries[0] || 0.65;
   state.reactiveMarkers = computeReactiveMarkers();
-  state.duration = last ? last.t : 0;
+  // Duration: prefer the overlay's last frame; fall back to the risk payload so
+  // the comparison view scales correctly on clips that ship without events.json.
+  state.duration = last ? last.t
+    : (state.risk && state.risk.duration_s) ? state.risk.duration_s : 0;
 
+  renderCompare();
   initEventLog();
   els.video.src = `clips/${id}/raw.mp4`;
   els.video.load();
@@ -413,6 +439,146 @@ function updateBanner() {
 // risk timeline
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Phase IV comparison: learned risk head vs the old threshold system
+// ---------------------------------------------------------------------------
+
+const VERDICT_CLASS = {
+  useful: "good", clean: "good",
+  "too early": "bad", "false alarm": "bad", miss: "bad", "too late": "bad",
+};
+
+function renderCompare() {
+  const r = state.risk;
+  const show = !!r;
+  els.compareWrap.classList.toggle("hidden", !show);
+  els.comparePanel.classList.toggle("hidden", !show);
+  if (!show) return;
+
+  const L = r.learned || {}, T = r.threshold_system || {};
+  const op = r.operating_point || {};
+  const fmt = (t) => (t == null || Number.isNaN(t) ? "—" : `${t.toFixed(2)} s`);
+  const lead = (t) => {
+    const te = (r.markers || {}).time_of_event;
+    if (t == null || te == null) return "";
+    return ` (${(te - t).toFixed(2)} s before impact)`;
+  };
+
+  const row = (name, verdict, when, extra) => `
+    <div class="cmp-row">
+      <div class="cmp-name">${name}</div>
+      <div class="cmp-verdict ${VERDICT_CLASS[verdict] || ""}">${verdict}</div>
+      <div class="cmp-when">${when}${extra || ""}</div>
+    </div>`;
+
+  els.compareRows.innerHTML =
+    row("Learned head (GRU)", L.verdict || "—",
+        fmt(L.event ? L.event.t : null), lead(L.event ? L.event.t : null)) +
+    row("Threshold system", T.verdict || "—",
+        fmt(T.first_alert_t),
+        `${lead(T.first_alert_t)}${T.n_events ? ` · ${T.n_events} events` : ""}`) +
+    `<div class="cmp-foot">clip ${r.clip_id} ·
+       ${r.label === 1 ? "positive (risky event)" : "negative (ordinary driving)"} ·
+       operating point thr ${op.threshold} / confirm ${op.confirm}</div>`;
+
+  els.compareExplain.innerHTML = L.event && L.event.explanation
+    ? `<div class="cmp-expl-label">explanation on intervention</div>
+       <div class="cmp-expl-text">${L.event.explanation}</div>`
+    : `<div class="cmp-expl-label">explanation on intervention</div>
+       <div class="cmp-expl-text muted">No alert fired${
+         r.label === 0 ? " — correct, this is ordinary driving." : "."}</div>`;
+}
+
+function sizeCompare() {
+  const c = els.compare;
+  const w = c.clientWidth || 800;
+  if (c.width !== w) c.width = w;
+  if (c.height !== 96) c.height = 96;
+}
+
+function drawCurve(ctx, curve, W, H, pad, color, fill) {
+  if (!curve || !curve.length) return;
+  const plotH = H - pad * 2;
+  const yOf = (p) => pad + (1 - p) * plotH;
+  if (fill) {
+    ctx.beginPath();
+    ctx.moveTo(tX(curve[0][0]), H);
+    curve.forEach(([t, p]) => ctx.lineTo(tX(t), yOf(p)));
+    ctx.lineTo(tX(curve[curve.length - 1][0]), H);
+    ctx.closePath();
+    ctx.fillStyle = fill; ctx.fill();
+  }
+  ctx.beginPath();
+  curve.forEach(([t, p], i) => {
+    const x = tX(t), y = yOf(p);
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  });
+  ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.stroke();
+}
+
+function drawCompare() {
+  const r = state.risk;
+  if (!r) return;
+  sizeCompare();
+  const c = els.compare, ctx = c.getContext("2d");
+  const W = c.width, H = c.height, pad = 8;
+  const plotH = H - pad * 2;
+  const yOf = (p) => pad + (1 - p) * plotH;
+  ctx.clearRect(0, 0, W, H);
+
+  // The old system's curve first, so the learned curve reads on top of it.
+  drawCurve(ctx, (r.threshold_system || {}).curve, W, H, pad,
+            "rgba(231,76,60,0.85)", "rgba(231,76,60,0.10)");
+  drawCurve(ctx, (r.learned || {}).curve, W, H, pad,
+            "#2ecc71", "rgba(46,204,113,0.14)");
+
+  // Committed decision threshold for the learned head.
+  const thr = (r.operating_point || {}).threshold;
+  if (thr != null) {
+    ctx.strokeStyle = "rgba(46,204,113,0.55)"; ctx.setLineDash([5, 4]); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, yOf(thr)); ctx.lineTo(W, yOf(thr)); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = "10px ui-monospace, monospace"; ctx.textBaseline = "bottom";
+    ctx.fillStyle = "rgba(46,204,113,0.9)";
+    ctx.fillText(`thr ${thr}`, 3, yOf(thr) - 1);
+  }
+
+  // Ground-truth markers: these are what make an alert judgeable.
+  const m = r.markers || {};
+  const vline = (t, color, label, dash) => {
+    if (t == null) return;
+    const x = tX(t);
+    ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+    if (dash) ctx.setLineDash(dash);
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = "10px ui-monospace, monospace"; ctx.textBaseline = "top";
+    ctx.fillStyle = color;
+    const tw = ctx.measureText(label).width;
+    ctx.fillText(label, Math.min(W - tw - 2, x + 3), 2);
+  };
+  vline(m.time_of_alert, "#4aa3f0", "alert", [4, 3]);
+  vline(m.time_of_event, "#e6e8eb", "impact", null);
+
+  // Where each system actually fired.
+  const tri = (t, color, up) => {
+    if (t == null) return;
+    const x = tX(t), y = up ? H - pad : pad;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    if (up) { ctx.moveTo(x - 5, y); ctx.lineTo(x + 5, y); ctx.lineTo(x, y - 8); }
+    else { ctx.moveTo(x - 5, y); ctx.lineTo(x + 5, y); ctx.lineTo(x, y + 8); }
+    ctx.closePath(); ctx.fill();
+  };
+  tri((r.learned || {}).event ? r.learned.event.t : null, "#2ecc71", true);
+  tri((r.threshold_system || {}).first_alert_t, "#e74c3c", false);
+
+  // playhead
+  const px = tX(els.video.currentTime || 0);
+  ctx.strokeStyle = "rgba(230,232,235,0.8)"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, H); ctx.stroke();
+}
+
 function sizeTimeline() {
   const c = els.timeline;
   const w = c.clientWidth || 800;
@@ -528,6 +694,7 @@ function tick() {
   syncEventLog();
   updateBanner();
   drawTimeline();
+  drawCompare();
   updateGapLabel();
   syncTransport();
   requestAnimationFrame(tick);

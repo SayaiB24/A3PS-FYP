@@ -3,3 +3,35 @@ feature width 112
 RiskGRU hidden=64 layers=1 params=34,465 (causality check passed)
 loss: kappa=3.0 pre_alert_weight=0.5 -> asks for a warning ~0.98s before impact on a mean-lead clip
 
+epoch   1  loss 0.7300  val useful 0.467 (28/60, 30 early)  mAP 0.664  FA 0.750  lead 3.72s  <- best
+           saved best (epoch 1) -> notebooks/models/risk_gru_v1.pt
+epoch   2  loss 0.5205  val useful 0.650 (39/60, 21 early)  mAP 0.655  FA 0.783  lead 3.14s  <- best
+           saved best (epoch 2) -> notebooks/models/risk_gru_v1.pt
+epoch   3  loss 0.4601  val useful 0.633 (38/60, 22 early)  mAP 0.672  FA 0.917  lead 3.13s
+epoch   4  loss 0.4373  val useful 0.783 (47/60, 5 early)  mAP 0.650  FA 0.500  lead 1.94s  <- best
+           saved best (epoch 4) -> notebooks/models/risk_gru_v1.pt
+epoch   5  loss 0.4212  val useful 0.833 (50/60, 5 early)  mAP 0.693  FA 0.583  lead 2.15s  <- best
+           saved best (epoch 5) -> notebooks/models/risk_gru_v1.pt
+epoch   6  loss 0.3979  val useful 0.550 (33/60, 27 early)  mAP 0.721  FA 0.850  lead 3.37s
+epoch   7  loss 0.3949  val useful 0.717 (43/60, 17 early)  mAP 0.707  FA 0.800  lead 2.79s
+epoch   8  loss 0.3759  val useful 0.833 (50/60, 6 early)  mAP 0.671  FA 0.550  lead 2.07s
+epoch   9  loss 0.3563  val useful 0.667 (40/60, 18 early)  mAP 0.691  FA 0.700  lead 2.91s
+epoch  10  loss 0.3574  val useful 0.600 (36/60, 23 early)  mAP 0.700  FA 0.867  lead 3.10s
+epoch  11  loss 0.3619  val useful 0.717 (43/60, 15 early)  mAP 0.697  FA 0.700  lead 2.70s
+epoch  12  loss 0.3526  val useful 0.567 (34/60, 25 early)  mAP 0.657  FA 0.950  lead 3.23s
+epoch  13  loss 0.3408  val useful 0.767 (46/60, 13 early)  mAP 0.718  FA 0.683  lead 2.68s
+
+early stop: no improvement for 8 epoch(s) (best was epoch 5 at 0.833). Stopping at epoch 13/30.
+
+trained in 1289s
+
+best epoch 5:
+  useful-warning rate : 0.833 (50/60; 5 fired too early)
+  false-alarm rate    : 0.583
+  mean lead time      : 2.15 s
+  AP @ -500 ms      : 0.795
+  AP @ -1000 ms      : 0.708
+  AP @ -1500 ms      : 0.575
+  mean AP             : 0.693
+           saved best (epoch 5) -> notebooks/models/risk_gru_v1.pt
+wrote eval/risk_gru_history.json

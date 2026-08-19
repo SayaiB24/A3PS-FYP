@@ -27,3 +27,10 @@ __pycache__/
 
 # Phase IV extracted features (regenerate with scripts/extract_features.py)
 data/features/
+
+# Phase IV dashboard demo videos: raw.mp4 files copied in by
+# scripts/build_dashboard_demo.py. They are ~23 MB each and fully derivable from
+# data/nexar/videos, so only the small risk.json results are versioned. (The 64
+# mp4s tracked before this rule stay tracked -- git does not retroactively
+# untrack, and they keep the original demo clips working after a fresh clone.)
+dashboard/clips/**/raw.mp4
