@@ -161,11 +161,130 @@ def learned_explanation(prob, alert_t, event_t, actor, threshold):
     return f"{base} Warned {lead:.2f} s before impact."
 
 
+def risk_level_for(prob, threshold):
+    """Map a learned frame-level probability to the dashboard's three risk bands.
+
+    Note this is a **scene-level** judgement applied to every actor in the frame.
+    The learned head pools features across actors and emits one probability per
+    frame, so it genuinely cannot say *which* actor is dangerous — colouring all
+    actors by the frame's risk is the honest visualisation of what the model
+    actually outputs. Per-actor attribution needs the per-actor head described in
+    docs/handoff/FUTURE_WORK.md.
+    """
+    if prob >= threshold:
+        return "danger"
+    if prob >= 0.6 * threshold:
+        return "caution"
+    return "safe"
+
+
+def build_slim_overlay(clip_json, learned_curve, args, cid, learned_event=None):
+    """A small events.json that still drives masks/trails/predictions/corridor.
+
+    The cached ClipResult is 20-50 MB per clip: it carries BEV fields the image-
+    space overlay never reads, 40-point mask polygons, full float precision and
+    indent=2. The renderer only needs frame_idx/t, the ego corridor, and per
+    track: id, cls, bbox, mask_poly, history_img, prediction.mean_img and
+    collision_prob. Keeping exactly those, decimating to ``--overlay-hz``,
+    simplifying masks and rounding to integers gets the same picture in a few MB.
+
+    Actor colour (``risk_level``) comes from the LEARNED head's frame-level
+    probability, so the overlay reflects the Phase IV model rather than the old
+    threshold system. ``collision_prob`` is left as the cached per-actor
+    geometric estimate, which is what the Top-threats panel ranks by.
+    """
+    from a3ps.perception.segmenter import simplify_polygon
+
+    def learned_at(t):
+        if not learned_curve:
+            return None
+        best, bp = 1e9, None
+        for lt, lp in learned_curve:
+            d = abs(lt - t)
+            if d < best:
+                best, bp = d, lp
+        return bp if best <= 0.5 else None
+
+    period = 1.0 / float(args.overlay_hz) if args.overlay_hz else 0.0
+    frames_out, next_t = [], None
+    for fr in clip_json["frames"]:
+        t = float(fr["t"])
+        if period and next_t is not None and t < next_t - 1e-9:
+            continue
+        next_t = t + period
+
+        p = learned_at(t)
+        level = risk_level_for(p, args.threshold) if p is not None else "safe"
+
+        tracks = []
+        for tr in fr["tracks"]:
+            pred = tr.get("prediction") or {}
+            mask = tr.get("mask_poly")
+            if mask:
+                mask = simplify_polygon(mask, args.overlay_mask_points)
+            out = {
+                "id": tr["id"], "cls": tr["cls"],
+                "bbox": [round(float(v)) for v in tr["bbox"]],
+                "risk_level": level,
+            }
+            if mask is not None and len(mask):
+                out["mask_poly"] = [[round(float(x)), round(float(y))] for x, y in mask]
+            if tr.get("history_img"):
+                out["history_img"] = [[round(float(x)), round(float(y))]
+                                      for x, y in tr["history_img"]]
+            mean_img = pred.get("mean_img")
+            if mean_img or pred.get("collision_prob") is not None:
+                out["prediction"] = {}
+                if mean_img:
+                    out["prediction"]["mean_img"] = [
+                        [round(float(x)), round(float(y))] for x, y in mean_img]
+                if pred.get("collision_prob") is not None:
+                    out["prediction"]["collision_prob"] = round(
+                        float(pred["collision_prob"]), 3)
+            tracks.append(out)
+
+        ego = fr.get("ego") or {}
+        frames_out.append({
+            "frame_idx": fr["frame_idx"], "t": round(t, 3), "tracks": tracks,
+            "ego": {"corridor_poly_img": ego.get("corridor_poly_img")},
+            "context": {"learned_risk": None if p is None else round(p, 4)},
+        })
+
+    events_out = []
+    if learned_event is not None:
+        # Surface the learned head's intervention in the dashboard event log, so
+        # the explanation is visible there and not only in the compare panel.
+        events_out.append({
+            "event_id": 1,
+            "frame_idx": 0,
+            "t": learned_event["t"],
+            "type": "ALERT",
+            "actor_id": 0,
+            "actor_cls": learned_event.get("actor_cls") or "scene",
+            "collision_prob": learned_event["prob"],
+            "threshold": args.threshold,
+            "ttc_s": None,
+            "explanation_template": learned_event["explanation"],
+            "explanation_llm": None,
+        })
+
+    meta = dict(clip_json.get("meta") or {})
+    meta["overlay_note"] = (
+        "Slim overlay built by scripts/build_dashboard_demo.py. Geometry "
+        "(masks/trails/predicted paths/corridor) is the shared perception+"
+        "tracking output. risk_level is the LEARNED head's frame-level risk "
+        "applied scene-wide -- it is not per-actor attribution. "
+        "prediction.collision_prob is the cached per-actor geometric estimate."
+    )
+    meta["overlay_hz"] = args.overlay_hz
+    return {"meta": meta, "frames": frames_out, "events": events_out}
+
+
 def build_clip(cid, row, model, args):
     feat_path = os.path.join(args.features, f"{cid}.npz")
     cached = os.path.join(args.cached_dir, cid, "events.json")
     if not os.path.isfile(feat_path) or not os.path.isfile(cached):
-        return None, "missing features or cached output"
+        return None, "missing features or cached output", None
 
     with np.load(feat_path, allow_pickle=False) as d:
         X = torch.from_numpy(d["X"])
@@ -248,7 +367,10 @@ def build_clip(cid, row, model, args):
             "verdict": old_verdict(),
         },
     }
-    return out, None
+    overlay = (None if args.no_overlay
+               else build_slim_overlay(clip_json, learned_curve, args, cid,
+                                       learned_event))
+    return out, None, overlay
 
 
 def pick_auto(index, args, n):
@@ -299,6 +421,14 @@ def main():
     p.add_argument("--n", type=int, default=6, help="How many clips when auto.")
     p.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     p.add_argument("--confirm", type=int, default=DEFAULT_CONFIRM)
+    p.add_argument("--overlay-hz", type=float, default=15.0,
+                   help="Frame rate for the slim overlay events.json (default "
+                        "%(default)s). Lower = smaller file, choppier overlay.")
+    p.add_argument("--overlay-mask-points", type=int, default=16,
+                   help="Max points per segmentation polygon in the overlay.")
+    p.add_argument("--no-overlay", action="store_true",
+                   help="Skip the slim events.json (risk curves only, no "
+                        "masks/trails/predictions).")
     p.add_argument("--no-video", action="store_true",
                    help="Skip copying the clip video (curves only).")
     args = p.parse_args()
@@ -319,7 +449,7 @@ def main():
         if row is None:
             print(f"  {cid}: not in index -- skipped")
             continue
-        data, err = build_clip(cid, row, model, args)
+        data, err, overlay = build_clip(cid, row, model, args)
         if data is None:
             print(f"  {cid}: {err} -- skipped")
             continue
@@ -328,6 +458,12 @@ def main():
         os.makedirs(dst, exist_ok=True)
         with open(os.path.join(dst, "risk.json"), "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=1)
+
+        if overlay is not None:
+            ov_path = os.path.join(dst, "events.json")
+            with open(ov_path, "w", encoding="utf-8") as fh:
+                json.dump(overlay, fh, separators=(",", ":"))
+            ov_mb = os.path.getsize(ov_path) / 1e6
 
         if not args.no_video:
             src = resolve_video(cid, row, args.videos_root)
@@ -342,21 +478,16 @@ def main():
               f"learned {lr['verdict']:11s} "
               f"@{(lr['event'] or {}).get('t', float('nan')):>6} s  |  "
               f"old {th['verdict']:11s} @{th['first_alert_t']} s "
-              f"({th['n_events']} events)")
+              f"({th['n_events']} events)"
+              + (f"  overlay {ov_mb:.1f} MB" if overlay is not None else ""))
         built.append(cid)
 
-    # Merge into the manifest, newest demo clips first, without dropping others.
-    man_path = os.path.join(args.out_dir, "manifest.json")
-    existing = []
-    if os.path.isfile(man_path):
-        with open(man_path, encoding="utf-8") as fh:
-            existing = json.load(fh)
-    merged = built + [c for c in existing if c not in built]
-    with open(man_path, "w", encoding="utf-8") as fh:
-        json.dump(merged, fh)
-
-    print(f"\nbuilt {len(built)} clip(s); manifest now lists {len(merged)}")
-    print(f"wrote {man_path}")
+    # The manifest is owned by scripts/update_manifest.py, which writes the
+    # grouped/labelled form the dropdown needs. Writing a plain id list here
+    # would silently downgrade it and lose the grouping, so prompt instead.
+    print(f"\nbuilt {len(built)} clip(s): {', '.join(built)}")
+    print("\nNow rebuild the dropdown (this script does not touch the manifest):")
+    print("  python scripts/update_manifest.py --require-video")
 
 
 if __name__ == "__main__":
