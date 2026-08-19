@@ -166,6 +166,59 @@ def _fmt(x, nd=3):
 # training
 # ---------------------------------------------------------------------------
 
+# Named feature groups for ablation, resolved against frame_feature_names() so a
+# change to the feature layout can never silently ablate the wrong columns.
+# Each entry is a predicate over a feature name.
+ABLATION_GROUPS = {
+    "ego": lambda n: n.startswith("ego_"),
+    "collision_prob": lambda n: n.endswith("collision_prob") or n in ("mean_prob", "max_prob"),
+    "ttc": lambda n: n.endswith("ttc_pred") or n.endswith("tau_area") or n.endswith("tau_h"),
+    "corridor": lambda n: "corridor" in n,
+    "kinematics": lambda n: any(n.endswith(s) for s in
+                               ("_vx", "_vy", "_ax", "_ay", "_area_growth")),
+    "appearance": lambda n: "_cls_" in n,
+}
+
+
+def resolve_ablation(spec):
+    """Comma-separated group names -> (column indices, resolved names).
+
+    Zeroing columns rather than removing them keeps the input width -- and
+    therefore the architecture and parameter count -- identical across ablation
+    arms, so a difference in the result is attributable to the information and
+    not to a different-sized model.
+    """
+    from a3ps.features.extract import frame_feature_names
+
+    if not spec:
+        return [], []
+    names = list(frame_feature_names())
+    wanted = [g.strip() for g in spec.split(",") if g.strip()]
+    unknown = [g for g in wanted if g not in ABLATION_GROUPS]
+    if unknown:
+        raise SystemExit(
+            f"unknown ablation group(s) {unknown}; "
+            f"available: {sorted(ABLATION_GROUPS)}")
+    cols, hit = [], []
+    for i, n in enumerate(names):
+        if any(ABLATION_GROUPS[g](n) for g in wanted):
+            cols.append(i)
+            hit.append(n)
+    if not cols:
+        raise SystemExit(f"ablation {wanted} matched no feature columns")
+    return cols, hit
+
+
+def apply_ablation(clips, cols):
+    """Zero the given feature columns in place, on every clip."""
+    if not cols:
+        return
+    idx = torch.tensor(cols, dtype=torch.long)
+    for c in clips:
+        c["X"] = c["X"].clone()
+        c["X"][:, idx] = 0.0
+
+
 def batched_logits(model, batch):
     """Per-clip logits from ONE padded forward pass instead of one call per clip.
 
@@ -284,7 +337,7 @@ def train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
               f"mAP {_fmt(val['mean_AP'])}  "
               f"FA {_fmt(val['false_alarm_rate'])}  "
               f"lead {_fmt(val['mean_lead_s'], 2)}s"
-              f"{' ✓fa' if ok_fa else ''}"
+              f"{'  [fa-ok]' if ok_fa else ''}"
               f"{'  <- best' if improved else ''}", flush=True)
 
         # Persist immediately, so an interrupted run still leaves the best model
@@ -339,6 +392,12 @@ def main():
                         "0 makes the loss blind to standing alarms -- see "
                         "a3ps/risk/anticipation_loss.py. Default %(default)s.")
     p.add_argument("--pos-weight", type=float, default=1.0)
+    p.add_argument("--ablate", default="",
+                   help="Comma-separated feature groups to ZERO OUT, for the "
+                        "ablation table: ego, collision_prob, ttc, corridor, "
+                        "kinematics, appearance. Columns are zeroed rather than "
+                        "removed so the input width, architecture and parameter "
+                        "count stay identical across arms.")
     p.add_argument("--fa-target", type=float, default=0.20,
                    help="False-alarm rate the checkpoint selector treats as the "
                         "hard constraint (default %(default)s, per "
@@ -401,6 +460,14 @@ def main():
         print("!! --allow-leakage: train == val. This is a PLUMBING CHECK, not a "
               "result. Do not quote any number below.")
 
+    abl_cols, abl_names = resolve_ablation(args.ablate)
+    if abl_cols:
+        apply_ablation(clips, abl_cols)
+        print(f"!! ABLATION '{args.ablate}': zeroed {len(abl_cols)} of {D} feature "
+              f"columns -> {abl_names[:6]}{' ...' if len(abl_names) > 6 else ''}")
+        print("   Input width and parameter count are unchanged; any difference in "
+              "the result is attributable to the missing information.")
+
     model = RiskGRU(D, hidden=args.hidden, layers=args.layers, dropout=args.dropout)
     assert_causal(model, D)
     print(f"RiskGRU hidden={args.hidden} layers={args.layers} "
@@ -418,6 +485,8 @@ def main():
             "has_ego": n_ego == len(clips),
             "n_clips_with_ego": n_ego,
             "kappa": args.kappa,
+            "ablate": args.ablate or None,
+            "ablated_columns": abl_cols or None,
             "pre_alert_weight": args.pre_alert_weight,
             "threshold": args.threshold,
             "best_epoch": b["epoch"],

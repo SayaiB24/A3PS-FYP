@@ -1,0 +1,43 @@
+train 1365 clips (685 pos) | val 120 clips (60 pos)
+feature width 112
+!! ABLATION 'collision_prob': zeroed 6 of 112 feature columns -> ['mean_prob', 'max_prob', 'top0_collision_prob', 'top1_collision_prob', 'top2_collision_prob', 'max_collision_prob']
+   Input width and parameter count are unchanged; any difference in the result is attributable to the missing information.
+RiskGRU hidden=64 layers=1 params=34,465 (causality check passed)
+loss: kappa=1.0 pre_alert_weight=0.5 -> asks for a warning ~1.46s before impact on a mean-lead clip
+
+epoch   1  loss 0.7386  val useful 0.367 (22/60, 37 early)  mAP 0.659  FA 0.750  lead 4.33s  <- best
+           saved best (epoch 1) -> notebooks/models/risk_gru_abl_collprob.pt
+epoch   2  loss 0.5377  val useful 0.550 (33/60, 27 early)  mAP 0.685  FA 0.750  lead 3.49s  <- best
+           saved best (epoch 2) -> notebooks/models/risk_gru_abl_collprob.pt
+epoch   3  loss 0.4765  val useful 0.650 (39/60, 21 early)  mAP 0.674  FA 0.900  lead 3.12s  <- best
+           saved best (epoch 3) -> notebooks/models/risk_gru_abl_collprob.pt
+epoch   4  loss 0.4582  val useful 0.800 (48/60, 3 early)  mAP 0.626  FA 0.483  lead 1.77s  <- best
+           saved best (epoch 4) -> notebooks/models/risk_gru_abl_collprob.pt
+epoch   5  loss 0.4439  val useful 0.800 (48/60, 8 early)  mAP 0.665  FA 0.533  lead 2.27s
+epoch   6  loss 0.4297  val useful 0.583 (35/60, 25 early)  mAP 0.696  FA 0.850  lead 3.28s
+epoch   7  loss 0.4243  val useful 0.733 (44/60, 14 early)  mAP 0.695  FA 0.800  lead 2.72s
+epoch   8  loss 0.4022  val useful 0.833 (50/60, 6 early)  mAP 0.664  FA 0.483  lead 2.00s  <- best
+           saved best (epoch 8) -> notebooks/models/risk_gru_abl_collprob.pt
+epoch   9  loss 0.3851  val useful 0.633 (38/60, 21 early)  mAP 0.691  FA 0.717  lead 2.98s
+epoch  10  loss 0.3875  val useful 0.633 (38/60, 21 early)  mAP 0.693  FA 0.850  lead 3.10s
+epoch  11  loss 0.3908  val useful 0.667 (40/60, 18 early)  mAP 0.677  FA 0.717  lead 2.90s
+epoch  12  loss 0.3831  val useful 0.650 (39/60, 21 early)  mAP 0.643  FA 0.933  lead 3.09s
+epoch  13  loss 0.3696  val useful 0.700 (42/60, 16 early)  mAP 0.692  FA 0.667  lead 2.75s
+epoch  14  loss 0.3677  val useful 0.600 (36/60, 23 early)  mAP 0.712  FA 0.683  lead 3.15s
+epoch  15  loss 0.3643  val useful 0.600 (36/60, 23 early)  mAP 0.695  FA 0.767  lead 3.19s
+epoch  16  loss 0.3490  val useful 0.717 (43/60, 15 early)  mAP 0.680  FA 0.800  lead 2.72s
+
+early stop: no improvement for 8 epoch(s) (best was epoch 8 at 0.833). Stopping at epoch 16/30.
+
+trained in 228s
+
+best epoch 8:
+  useful-warning rate : 0.833 (50/60; 6 fired too early)
+  false-alarm rate    : 0.483
+  mean lead time      : 2.00 s
+  AP @ -500 ms      : 0.765
+  AP @ -1000 ms      : 0.678
+  AP @ -1500 ms      : 0.549
+  mean AP             : 0.664
+           saved best (epoch 8) -> notebooks/models/risk_gru_abl_collprob.pt
+wrote eval/risk_gru_history_abl_collprob.json

@@ -1,0 +1,34 @@
+train 1365 clips (685 pos) | val 120 clips (60 pos)
+feature width 112
+!! ABLATION 'ttc': zeroed 12 of 112 feature columns -> ['top0_tau_area', 'top0_tau_h', 'top0_ttc_pred', 'top1_tau_area', 'top1_tau_h', 'top1_ttc_pred'] ...
+   Input width and parameter count are unchanged; any difference in the result is attributable to the missing information.
+RiskGRU hidden=64 layers=1 params=34,465 (causality check passed)
+loss: kappa=1.0 pre_alert_weight=0.5 -> asks for a warning ~1.46s before impact on a mean-lead clip
+
+epoch   1  loss 0.7343  val useful 0.000 (0/60, 0 early)  mAP 0.466  FA 0.000  lead n/as  [fa-ok]  <- best
+           saved best (epoch 1) -> notebooks/models/risk_gru_abl_ttc.pt
+epoch   2  loss 0.5595  val useful 0.017 (1/60, 0 early)  mAP 0.465  FA 0.000  lead 0.20s  [fa-ok]  <- best
+           saved best (epoch 2) -> notebooks/models/risk_gru_abl_ttc.pt
+epoch   3  loss 0.4866  val useful 0.017 (1/60, 0 early)  mAP 0.466  FA 0.067  lead 1.00s  [fa-ok]
+epoch   4  loss 0.4530  val useful 0.017 (1/60, 0 early)  mAP 0.468  FA 0.100  lead 1.70s  [fa-ok]
+epoch   5  loss 0.4376  val useful 0.017 (1/60, 0 early)  mAP 0.472  FA 0.000  lead 0.60s  [fa-ok]
+epoch   6  loss 0.4257  val useful 0.017 (1/60, 0 early)  mAP 0.466  FA 0.117  lead 1.00s  [fa-ok]
+epoch   7  loss 0.4056  val useful 0.017 (1/60, 0 early)  mAP 0.467  FA 0.067  lead 1.00s  [fa-ok]
+epoch   8  loss 0.3946  val useful 0.017 (1/60, 0 early)  mAP 0.468  FA 0.000  lead 0.60s  [fa-ok]
+epoch   9  loss 0.3702  val useful 0.017 (1/60, 0 early)  mAP 0.466  FA 0.067  lead 1.00s  [fa-ok]
+epoch  10  loss 0.3732  val useful 0.017 (1/60, 0 early)  mAP 0.466  FA 0.050  lead 1.00s  [fa-ok]
+
+early stop: no improvement for 8 epoch(s) (best was epoch 2 at 0.017). Stopping at epoch 10/30.
+
+trained in 242s
+
+best epoch 2:
+  useful-warning rate : 0.017 (1/60; 0 fired too early)
+  false-alarm rate    : 0.000
+  mean lead time      : 0.20 s
+  AP @ -500 ms      : 0.464
+  AP @ -1000 ms      : 0.466
+  AP @ -1500 ms      : 0.466
+  mean AP             : 0.465
+           saved best (epoch 2) -> notebooks/models/risk_gru_abl_ttc.pt
+wrote eval/risk_gru_history_abl_ttc.json
