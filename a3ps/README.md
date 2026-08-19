@@ -50,7 +50,13 @@ python scripts/serve_dashboard.py
 
 ## Documentation
 
-See [`docs/`](docs/README.md) for the full index. In short:
+**[`docs/INDEX.md`](docs/INDEX.md) is the master index** — what every doc is for,
+an "I want to… → read this" lookup, and which docs are current vs. pre-Phase IV.
+Start there if you are unsure where to look.
+
+To continue the project, go straight to [`docs/handoff/`](docs/handoff/README.md).
+
+In short:
 
 - [`docs/runbooks/`](docs/runbooks/) — things you execute.
   [`execution.md`](docs/runbooks/execution.md) is the place to start;

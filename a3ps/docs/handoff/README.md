@@ -3,6 +3,10 @@
 Written for continuing A3PS **by hand, without an assistant**. Everything needed
 to reproduce the committed results, extend them, and write them up honestly.
 
+For anything outside this folder, [`../INDEX.md`](../INDEX.md) is the master
+index — it also flags which older docs describe the superseded threshold system,
+which matters before quoting any number.
+
 ## Start here
 
 | doc | read it when |

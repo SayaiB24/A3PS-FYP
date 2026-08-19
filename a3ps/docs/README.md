@@ -4,6 +4,11 @@ Grouped by what you are trying to do. Generated evaluation output is **not**
 here — it lives in [`../eval/`](../eval/), because scripts write and read those
 files at fixed paths.
 
+> **📑 [`INDEX.md`](INDEX.md) is the master index** — every doc with its purpose,
+> an "I want to… → read this" lookup, reading orders per role, and **which docs
+> are current vs. pre-Phase IV**. Read it if you are not sure where to look, or
+> before quoting any number.
+
 ## → [`handoff/`](handoff/) — start here to continue the project
 
 Written for working **without an assistant**: what to do next, how to reproduce
