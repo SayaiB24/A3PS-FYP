@@ -1031,10 +1031,12 @@ example command. (`serve_dashboard.py` covered here too for completeness.)
 - **Input:** a clip directory or its `events.json`.
 - **Output:** a printed verdict (`OK` or `SUSPECT`) + recommendation; exit
   code 0/1 accordingly.
-- **Example:** `python scripts/verify_bev.py dashboard/clips/02134_pipe/events.json`
+- **Example:** `python scripts/verify_bev.py dashboard/clips/dev01/events.json`
 - **Historical result:** this tool is what led to the decision to default
   `forecast_space: img` instead of `bev` — the default ground-plane
-  calibration failed this check on real footage (see §12).
+  calibration fails this check on 6 of 8 real pipeline clips (see §12 and
+  `../status/pivot_open_questions.md` §3 for the full per-clip table;
+  `02134_pipe` itself now passes, so it is no longer a good example).
 
 ### `scripts/serve_dashboard.py`
 - **Why:** serve the static `dashboard/` folder over HTTP (the dashboard
