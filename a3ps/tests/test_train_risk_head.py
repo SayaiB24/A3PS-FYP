@@ -155,3 +155,51 @@ def test_ragged_batch_preserves_each_length():
     with torch.no_grad():
         out = batched_logits(m, batch)
     assert [int(o.shape[0]) for o in out] == lens
+
+
+# ---------------------------------------------------------------------------
+# ablation must reach the validation set as well as the training set
+# ---------------------------------------------------------------------------
+
+def test_ablation_zeroes_val_features_too(tmp_path, monkeypatch):
+    """--ablate with a separate --val-features dir must ablate BOTH sides.
+
+    It used to zero only the training clips: the model trained on ablated inputs
+    and was scored on intact ones, so every ablation result was a train/eval
+    shift rather than a measurement of the missing information.
+    """
+    import numpy as np
+    import train_risk_head as trh
+    from a3ps.features.extract import frame_feature_dim, frame_feature_names, save_features
+
+    dim = frame_feature_dim()
+    names = list(frame_feature_names())
+    ego_cols = [i for i, n in enumerate(names) if n.startswith("ego_")]
+    assert ego_cols, "test needs the ego_* columns to exist"
+
+    for split in ("tr", "va"):
+        for i, label in enumerate((0, 1)):
+            feats = {"X": np.ones((20, dim), np.float32), "t": np.arange(20) * 0.1,
+                     "n_actors": np.ones(20), "has_ego": True}
+            meta = {"clip_id": f"{split}{i}", "label": label,
+                    "event_time_s": 1.5 if label else None,
+                    "alert_time_s": 0.5 if label else None}
+            save_features(str(tmp_path / split / f"{split}{i}.npz"), feats, meta)
+
+    seen = {}
+
+    def fake_train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
+        seen["train"], seen["val"] = train_clips, val_clips
+        return None, []
+
+    monkeypatch.setattr(trh, "train", fake_train)
+    monkeypatch.setattr(sys, "argv", [
+        "train_risk_head.py", "--features", str(tmp_path / "tr"),
+        "--val-features", str(tmp_path / "va"), "--ablate", "ego"])
+    trh.main()
+
+    for side in ("train", "val"):
+        for c in seen[side]:
+            assert (c["X"][:, ego_cols] == 0).all(), f"ego not zeroed on {side}"
+            other = [j for j in range(dim) if j not in ego_cols]
+            assert (c["X"][:, other] == 1).all(), f"non-ego columns altered on {side}"

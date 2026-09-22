@@ -1,0 +1,126 @@
+{
+  "threshold": 0.6,
+  "confirm": 8,
+  "features": "data/features/eval",
+  "rows": [
+    {
+      "group": "ego",
+      "checkpoint": "notebooks/models\\risk_gru_abl_ego.pt",
+      "ablated_columns": [
+        "ego_tx",
+        "ego_ty",
+        "ego_log_scale",
+        "ego_rot"
+      ],
+      "trained_ablate_field": "ego",
+      "trained_best_epoch": 8,
+      "n_clips": 120,
+      "n_timed": 60,
+      "useful_warning_rate": 0.6833333333333333,
+      "n_useful": 41,
+      "n_too_early": 1,
+      "false_alarm_rate": 0.15,
+      "mean_lead_s": 1.6801189226422988,
+      "AP": {
+        "0.5": 0.8003135469051663,
+        "1.0": 0.7057690207495713,
+        "1.5": 0.5621495063319618
+      },
+      "mean_AP": 0.6894106913288999
+    },
+    {
+      "group": "corridor",
+      "checkpoint": "notebooks/models\\risk_gru_abl_corridor.pt",
+      "ablated_columns": [
+        "frac_in_corridor",
+        "top0_corridor_dist",
+        "top0_corridor_dist_rate",
+        "top0_in_corridor",
+        "top1_corridor_dist",
+        "top1_corridor_dist_rate",
+        "top1_in_corridor",
+        "top2_corridor_dist",
+        "top2_corridor_dist_rate",
+        "top2_in_corridor",
+        "max_corridor_dist",
+        "max_corridor_dist_rate",
+        "max_in_corridor"
+      ],
+      "trained_ablate_field": "corridor",
+      "trained_best_epoch": 4,
+      "n_clips": 120,
+      "n_timed": 60,
+      "useful_warning_rate": 0.5833333333333334,
+      "n_useful": 35,
+      "n_too_early": 1,
+      "false_alarm_rate": 0.1,
+      "mean_lead_s": 1.3490834140777588,
+      "AP": {
+        "0.5": 0.7582620918080176,
+        "1.0": 0.6715487861140252,
+        "1.5": 0.5321027591497305
+      },
+      "mean_AP": 0.6539712123572577
+    },
+    {
+      "group": "collision_prob",
+      "checkpoint": "notebooks/models\\risk_gru_abl_collprob.pt",
+      "ablated_columns": [
+        "mean_prob",
+        "max_prob",
+        "top0_collision_prob",
+        "top1_collision_prob",
+        "top2_collision_prob",
+        "max_collision_prob"
+      ],
+      "trained_ablate_field": "collision_prob",
+      "trained_best_epoch": 4,
+      "n_clips": 120,
+      "n_timed": 60,
+      "useful_warning_rate": 0.7166666666666667,
+      "n_useful": 43,
+      "n_too_early": 2,
+      "false_alarm_rate": 0.26666666666666666,
+      "mean_lead_s": 1.6549554640028212,
+      "AP": {
+        "0.5": 0.7640001855182703,
+        "1.0": 0.6759327664835524,
+        "1.5": 0.535687112360939
+      },
+      "mean_AP": 0.6585400214542539
+    },
+    {
+      "group": "ttc",
+      "checkpoint": "notebooks/models\\risk_gru_abl_ttc.pt",
+      "ablated_columns": [
+        "top0_tau_area",
+        "top0_tau_h",
+        "top0_ttc_pred",
+        "top1_tau_area",
+        "top1_tau_h",
+        "top1_ttc_pred",
+        "top2_tau_area",
+        "top2_tau_h",
+        "top2_ttc_pred",
+        "max_tau_area",
+        "max_tau_h",
+        "max_ttc_pred"
+      ],
+      "trained_ablate_field": "ttc",
+      "trained_best_epoch": 10,
+      "n_clips": 120,
+      "n_timed": 60,
+      "useful_warning_rate": 0.8333333333333334,
+      "n_useful": 50,
+      "n_too_early": 6,
+      "false_alarm_rate": 0.38333333333333336,
+      "mean_lead_s": 1.9480714368820191,
+      "AP": {
+        "0.5": 0.7621657563081521,
+        "1.0": 0.6576335749405625,
+        "1.5": 0.5308658897292922
+      },
+      "mean_AP": 0.6502217403260023
+    }
+  ]
+}

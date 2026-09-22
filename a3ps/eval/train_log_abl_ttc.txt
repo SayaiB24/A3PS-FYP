@@ -5,30 +5,42 @@ feature width 112
 RiskGRU hidden=64 layers=1 params=34,465 (causality check passed)
 loss: kappa=1.0 pre_alert_weight=0.5 -> asks for a warning ~1.46s before impact on a mean-lead clip
 
-epoch   1  loss 0.7343  val useful 0.000 (0/60, 0 early)  mAP 0.466  FA 0.000  lead n/as  [fa-ok]  <- best
+epoch   1  loss 0.7342  val useful 0.500 (30/60, 21 early)  mAP 0.675  FA 0.417  lead 3.48s  <- best
            saved best (epoch 1) -> notebooks/models/risk_gru_abl_ttc.pt
-epoch   2  loss 0.5595  val useful 0.017 (1/60, 0 early)  mAP 0.465  FA 0.000  lead 0.20s  [fa-ok]  <- best
-           saved best (epoch 2) -> notebooks/models/risk_gru_abl_ttc.pt
-epoch   3  loss 0.4866  val useful 0.017 (1/60, 0 early)  mAP 0.466  FA 0.067  lead 1.00s  [fa-ok]
-epoch   4  loss 0.4530  val useful 0.017 (1/60, 0 early)  mAP 0.468  FA 0.100  lead 1.70s  [fa-ok]
-epoch   5  loss 0.4376  val useful 0.017 (1/60, 0 early)  mAP 0.472  FA 0.000  lead 0.60s  [fa-ok]
-epoch   6  loss 0.4257  val useful 0.017 (1/60, 0 early)  mAP 0.466  FA 0.117  lead 1.00s  [fa-ok]
-epoch   7  loss 0.4056  val useful 0.017 (1/60, 0 early)  mAP 0.467  FA 0.067  lead 1.00s  [fa-ok]
-epoch   8  loss 0.3946  val useful 0.017 (1/60, 0 early)  mAP 0.468  FA 0.000  lead 0.60s  [fa-ok]
-epoch   9  loss 0.3702  val useful 0.017 (1/60, 0 early)  mAP 0.466  FA 0.067  lead 1.00s  [fa-ok]
-epoch  10  loss 0.3732  val useful 0.017 (1/60, 0 early)  mAP 0.466  FA 0.050  lead 1.00s  [fa-ok]
+epoch   2  loss 0.5621  val useful 0.467 (28/60, 32 early)  mAP 0.651  FA 0.783  lead 3.87s
+epoch   3  loss 0.4863  val useful 0.667 (40/60, 19 early)  mAP 0.692  FA 0.700  lead 3.09s  <- best
+           saved best (epoch 3) -> notebooks/models/risk_gru_abl_ttc.pt
+epoch   4  loss 0.4493  val useful 0.733 (44/60, 5 early)  mAP 0.619  FA 0.433  lead 1.75s  <- best
+           saved best (epoch 4) -> notebooks/models/risk_gru_abl_ttc.pt
+epoch   5  loss 0.4393  val useful 0.817 (49/60, 11 early)  mAP 0.682  FA 0.567  lead 2.35s  <- best
+           saved best (epoch 5) -> notebooks/models/risk_gru_abl_ttc.pt
+epoch   6  loss 0.4234  val useful 0.750 (45/60, 14 early)  mAP 0.663  FA 0.750  lead 2.64s
+epoch   7  loss 0.4047  val useful 0.733 (44/60, 16 early)  mAP 0.679  FA 0.833  lead 2.79s
+epoch   8  loss 0.3949  val useful 0.833 (50/60, 8 early)  mAP 0.691  FA 0.367  lead 2.15s  <- best
+           saved best (epoch 8) -> notebooks/models/risk_gru_abl_ttc.pt
+epoch   9  loss 0.3703  val useful 0.617 (37/60, 23 early)  mAP 0.641  FA 0.733  lead 3.15s
+epoch  10  loss 0.3746  val useful 0.850 (51/60, 7 early)  mAP 0.650  FA 0.600  lead 2.24s  <- best
+           saved best (epoch 10) -> notebooks/models/risk_gru_abl_ttc.pt
+epoch  11  loss 0.3631  val useful 0.783 (47/60, 13 early)  mAP 0.646  FA 0.717  lead 2.50s
+epoch  12  loss 0.3552  val useful 0.550 (33/60, 27 early)  mAP 0.651  FA 0.900  lead 3.43s
+epoch  13  loss 0.3445  val useful 0.650 (39/60, 20 early)  mAP 0.645  FA 0.783  lead 2.85s
+epoch  14  loss 0.3320  val useful 0.600 (36/60, 19 early)  mAP 0.667  FA 0.567  lead 2.88s
+epoch  15  loss 0.3295  val useful 0.667 (40/60, 20 early)  mAP 0.652  FA 0.783  lead 2.84s
+epoch  16  loss 0.3157  val useful 0.700 (42/60, 14 early)  mAP 0.633  FA 0.817  lead 2.64s
+epoch  17  loss 0.3223  val useful 0.767 (46/60, 2 early)  mAP 0.561  FA 0.417  lead 1.54s
+epoch  18  loss 0.3039  val useful 0.750 (45/60, 11 early)  mAP 0.611  FA 0.817  lead 2.48s
 
-early stop: no improvement for 8 epoch(s) (best was epoch 2 at 0.017). Stopping at epoch 10/30.
+early stop: no improvement for 8 epoch(s) (best was epoch 10 at 0.850). Stopping at epoch 18/30.
 
-trained in 242s
+trained in 150s
 
-best epoch 2:
-  useful-warning rate : 0.017 (1/60; 0 fired too early)
-  false-alarm rate    : 0.000
-  mean lead time      : 0.20 s
-  AP @ -500 ms      : 0.464
-  AP @ -1000 ms      : 0.466
-  AP @ -1500 ms      : 0.466
-  mean AP             : 0.465
-           saved best (epoch 2) -> notebooks/models/risk_gru_abl_ttc.pt
+best epoch 10:
+  useful-warning rate : 0.850 (51/60; 7 fired too early)
+  false-alarm rate    : 0.600
+  mean lead time      : 2.24 s
+  AP @ -500 ms      : 0.762
+  AP @ -1000 ms      : 0.658
+  AP @ -1500 ms      : 0.531
+  mean AP             : 0.650
+           saved best (epoch 10) -> notebooks/models/risk_gru_abl_ttc.pt
 wrote eval/risk_gru_history_abl_ttc.json

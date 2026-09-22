@@ -462,7 +462,12 @@ def main():
 
     abl_cols, abl_names = resolve_ablation(args.ablate)
     if abl_cols:
+        # Ablate validation too. With --val-features it is a separate list from
+        # `clips`; zeroing only the training side trains on the ablated inputs
+        # but scores on intact ones, which is a train/eval shift, not an
+        # ablation. Zeroing is idempotent, so overlap between the lists is safe.
         apply_ablation(clips, abl_cols)
+        apply_ablation(val_clips, abl_cols)
         print(f"!! ABLATION '{args.ablate}': zeroed {len(abl_cols)} of {D} feature "
               f"columns -> {abl_names[:6]}{' ...' if len(abl_names) > 6 else ''}")
         print("   Input width and parameter count are unchanged; any difference in "
