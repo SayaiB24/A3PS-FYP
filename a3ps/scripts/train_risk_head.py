@@ -445,7 +445,7 @@ NEAR_CHANCE_AP_MARGIN = 0.05
 
 
 def train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
-    """Train the head, returning ``(best, history, fallback_used)``.
+    """Train the head, returning ``(best, history, fallback_used, degenerate)``.
 
     ``on_improve(best)`` is called every time an epoch sets a new best validation
     score, and ``on_epoch(history)`` after every epoch. Both exist so the caller
@@ -485,6 +485,30 @@ def train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
     ``extra`` dict as ``selection_fallback_used``) and re-fires ``on_improve``
     so the saved checkpoint on disk reflects the swap, not the near-chance pick
     that was "best" for most of the run.
+
+    A checkpoint-safety gap in that fallback, and its fix
+    ------------------------------------------------------
+    The fallback above only ever fires when ``best["rank"][0] == 0`` -- i.e.
+    when NO epoch ever met ``fa_target``. Seed 1238 exposed the gap: its
+    selected epoch (epoch 1) met ``fa_target`` on the PRIMARY rule (FA 0.127 at
+    the training loop's own scoring point), so ``rank[0] == 1`` and the
+    fallback never even looked at it -- yet that epoch's mean AP was 0.490, at
+    or below chance. Meeting the FA gate was being treated as sufficient
+    evidence of a legitimate result, and it is not: an under-trained epoch can
+    fire rarely enough to be FA-compliant by accident, exactly like a
+    near-constant-low output would.
+
+    The fix here is deliberately NOT another selection rule -- it does not
+    change which epoch gets chosen, on either path. It is a final,
+    unconditional check on whatever epoch ends up as ``best``, regardless of
+    which rule produced it: if that epoch's mean AP is still within
+    :data:`NEAR_CHANCE_AP_MARGIN` of chance, the run's 4th return value,
+    ``degenerate``, is set ``True`` and the checkpoint's ``extra`` dict gets
+    ``degenerate_checkpoint: True`` -- whether or not ``fa_target`` was ever
+    met, whether or not the AP-fallback above fired, whether or not it even
+    could have fired (e.g. if the run's OWN best-by-AP epoch is itself near
+    chance). This makes a chance-level checkpoint impossible to consume
+    silently downstream; it does not retrain or select around one.
     """
     opt = torch.optim.Adam(model.parameters(), lr=args.lr,
                            weight_decay=args.weight_decay)
@@ -613,7 +637,22 @@ def train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
         if on_improve is not None:
             on_improve(best)
 
-    return best, history, fallback_used
+    # Unconditional final check, independent of fallback_used and of whether
+    # fa_target was ever met: whatever epoch ended up as `best`, if its mean AP
+    # is still near chance, that has to be visible downstream. This is what
+    # closes the seed-1238 gap -- that run's selected epoch met fa_target on
+    # the primary rule, so fallback_used is False here, and this check is the
+    # only thing that catches it.
+    degenerate = bool(best is not None and best["val"]["mean_AP"] == best["val"]["mean_AP"]
+                      and best["val"]["mean_AP"] < near_chance_ap)
+    if degenerate:
+        print(f"\n!! DEGENERATE CHECKPOINT: the selected epoch {best['epoch']}'s "
+              f"mean AP ({_fmt(best['val']['mean_AP'])}) is within "
+              f"{NEAR_CHANCE_AP_MARGIN} of chance ({_fmt(chance_ap)}) on this val "
+              "set. This holds regardless of fa_target or the fallback above -- "
+              "do not treat this checkpoint as a valid result.", flush=True)
+
+    return best, history, fallback_used, degenerate
 
 
 def main():
@@ -757,6 +796,7 @@ def main():
     # whole run is known -- and the final save_best() call after train()
     # returns sees the true value once `fallback_used` is reassigned.
     fallback_used = False
+    degenerate = False
 
     # Save-on-improvement. Defined here (not inside train()) so train() stays a
     # pure loop and the persistence policy lives with the CLI that owns the paths.
@@ -785,6 +825,12 @@ def main():
             # where fa_target_met is also False) means the useful-first
             # fallback pick was kept because its mean AP was not near chance.
             "selection_fallback_used": bool(fallback_used),
+            # Unconditional: True if the FINAL selected epoch's mean AP is near
+            # chance, regardless of fa_target_met or selection_fallback_used.
+            # This is what catches seed 1238 -- fa_target_met True,
+            # selection_fallback_used False, degenerate_checkpoint True.
+            # Never consume a checkpoint with this set without knowing why.
+            "degenerate_checkpoint": bool(degenerate),
         }
 
     def save_best(b):
@@ -808,8 +854,9 @@ def main():
             json.dump(h, fh, indent=2)
 
     t0 = time.perf_counter()
-    best, history, fallback_used = train(model, train_clips, val_clips, args,
-                                         on_improve=save_best, on_epoch=save_history)
+    best, history, fallback_used, degenerate = train(
+        model, train_clips, val_clips, args,
+        on_improve=save_best, on_epoch=save_history)
     print(f"\ntrained in {time.perf_counter() - t0:.0f}s")
 
     if best is None:
@@ -829,6 +876,8 @@ def main():
     print(f"  fa_target ever met  : {bool(best['rank'][0] == 1)}")
     print(f"  selection fallback  : {fallback_used}"
           f"{' (near-chance override fired)' if fallback_used else ''}")
+    print(f"  DEGENERATE checkpoint: {degenerate}"
+          f"{' -- mean AP is near chance; do not use this result' if degenerate else ''}")
 
     # Both were already written during training (save-on-improvement above); these
     # final writes just guarantee the on-disk copy matches the returned best.

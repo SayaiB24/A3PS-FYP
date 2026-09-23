@@ -190,7 +190,7 @@ def test_ablation_zeroes_val_features_too(tmp_path, monkeypatch):
 
     def fake_train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
         seen["train"], seen["val"] = train_clips, val_clips
-        return None, [], False
+        return None, [], False, False
 
     monkeypatch.setattr(trh, "train", fake_train)
     monkeypatch.setattr(sys, "argv", [
@@ -270,7 +270,7 @@ def test_final_eval_report_flag_permits_the_single_final_read(tmp_path, monkeypa
 
     def fake_train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
         reached["yes"] = True
-        return None, [], False
+        return None, [], False, False
 
     monkeypatch.setattr(trh, "train", fake_train)
     monkeypatch.setattr(sys, "argv", [
@@ -687,12 +687,13 @@ def test_train_selection_fallback_picks_best_ap_not_near_chance_epoch(monkeypatc
         epochs = 3
         patience = 0
 
-    best, history, fallback_used = trh.train(m, train_clips, val_clips, Args())
+    best, history, fallback_used, degenerate = trh.train(m, train_clips, val_clips, Args())
 
     assert fallback_used is True
     assert best["epoch"] == 3
     assert best["val"]["mean_AP"] == pytest.approx(0.75)
     assert best["rank"][0] == 0        # fa_target was never met this run
+    assert degenerate is False         # the fallback rescued it -- 0.75 is not near chance
 
 
 def test_train_no_fallback_when_useful_first_pick_is_not_near_chance(monkeypatch):
@@ -737,8 +738,64 @@ def test_train_no_fallback_when_useful_first_pick_is_not_near_chance(monkeypatch
         epochs = 2
         patience = 0
 
-    best, history, fallback_used = trh.train(m, train_clips, val_clips, Args())
+    best, history, fallback_used, degenerate = trh.train(m, train_clips, val_clips, Args())
 
     assert fallback_used is False
     assert best["epoch"] == 1
     assert best["val"]["mean_AP"] == pytest.approx(0.63)
+    assert degenerate is False
+
+
+def test_train_flags_degenerate_even_when_fa_target_met(monkeypatch):
+    """The seed-1238 gap: an epoch can meet fa_target on the PRIMARY rule and
+    still be chance-level. The fallback above never fires for it (it only
+    fires when NO epoch meets fa_target), so the unconditional post-selection
+    check is the only thing that can catch this -- and it must."""
+    import train_risk_head as trh
+
+    # epoch 1 meets fa_target (FA 0.10 <= 0.20) via the PRIMARY rule, so
+    # rank[0] == 1 and the near-chance fallback never activates for it. Its
+    # mean AP is 0.50 -- chance on this ~50/50 val set.
+    scripted = [
+        (0.30, 0.10, 0.50),   # epoch 1: FA-compliant, chance-level AP
+        (0.35, 0.55, 0.65),   # epoch 2: not FA-compliant, real separation
+    ]
+
+    def fake_evaluate(model, clips, threshold, confirm=3, dump_rows=False):
+        useful, fa, ap = scripted[min(fake_evaluate.calls, len(scripted) - 1)]
+        fake_evaluate.calls += 1
+        return {"n_clips": 20, "n_timed": 10, "useful_warning_rate": useful,
+                "n_useful": int(round(useful * 10)), "n_too_early": 0,
+                "false_alarm_rate": fa, "mean_lead_s": 1.0,
+                "AP": {0.5: ap, 1.0: ap, 1.5: ap}, "mean_AP": ap}
+    fake_evaluate.calls = 0
+
+    monkeypatch.setattr(trh, "evaluate", fake_evaluate)
+
+    m = _model(seed=1)
+    train_clips = [_clip(40, 1, label=1, alert=1.0, event=3.0),
+                  _clip(40, 2, label=0)]
+    val_clips = [_clip(20, i, label=1 if i % 2 else 0) for i in range(20)]
+
+    class Args:
+        lr = 1e-3
+        weight_decay = 1e-4
+        grad_clip = 5.0
+        seed = 1
+        batch_size = 2
+        kappa = 3.0
+        pre_alert_weight = 0.5
+        pos_weight = 1.0
+        threshold = 0.5
+        confirm = 3
+        fa_target = 0.20
+        epochs = 2
+        patience = 0
+
+    best, history, fallback_used, degenerate = trh.train(m, train_clips, val_clips, Args())
+
+    assert best["rank"][0] == 1     # fa_target WAS met -- the primary rule ran normally
+    assert fallback_used is False   # so the near-chance fallback never activates
+    assert best["epoch"] == 1       # epoch 1 wins the primary rule (FA-compliant beats not)
+    assert best["val"]["mean_AP"] == pytest.approx(0.50)
+    assert degenerate is True       # but it must still be flagged as chance-level
