@@ -27,7 +27,8 @@ explicitly.
 | Answer a tricky implementation question | [`design/QnA.md`](design/QnA.md) | Q&A form, mostly Phases I–III |
 | Run the GPU-side dataset/extraction work | [`runbooks/GPU_PHASE4.md`](runbooks/GPU_PHASE4.md) | Current GPU runbook |
 | Set up the two-laptop workflow | [`runbooks/GPU_HANDOFF.md`](runbooks/GPU_HANDOFF.md) | Env setup current; its task list is pre-pivot |
-| **Quote the headline number** | [`status/clean_protocol_results.md`](status/clean_protocol_results.md) | **Start here.** The held-out number is useful-warning 0.633 at FA 0.200; the 0.750 everywhere else was selected on the eval split |
+| **Quote a headline number** | [`status/repartition_results.md`](status/repartition_results.md) | **Start here. There is currently no quotable held-out number.** The splits were redrawn on 2026-09-23 and the new eval split has not been scored; every earlier eval number was measured on a split that held the 60 most anticipatable positives in the dataset |
+| Understand why the splits were redrawn | [`status/label_window_audit.md`](status/label_window_audit.md) | `labels.xlsx` was sorted by alert-to-event window and cut at the 65 longest clips, so dev/eval absorbed all of them |
 | Understand why the old headline is superseded | [`status/eval_leakage_audit.md`](status/eval_leakage_audit.md) | Evidence that every checkpoint was early-stopped on the frozen eval split |
 | See the capacity and feature-ablation results | [`status/ablations.md`](status/ablations.md) | Ablation numbers are **invalid** (bug, fixed) — read the banner; they are also selection-biased, see the clean-protocol doc |
 | Know why Kalman/img-space/etc are still the defaults, and the rerun ablation numbers | [`status/pivot_open_questions.md`](status/pivot_open_questions.md) | Answers with file:line evidence, not restated config |
@@ -87,7 +88,9 @@ paths. See §5.
 | [`TODO.md`](status/TODO.md) | ✅ Header + Part B current. Part A is a pre-pivot record, marked as such. |
 | [`ablations.md`](status/ablations.md) | ✅ Capacity result (current). ⚠️ Its "not yet re-run" banner is now stale — the fix was verified and the four ablations rerun; see [`pivot_open_questions.md`](status/pivot_open_questions.md) §4 for the current numbers. |
 | [`pivot_open_questions.md`](status/pivot_open_questions.md) | ✅ Current (2026-09-22). Seq2Seq-vs-Kalman, BEV calibration, and the ablation rerun, investigated with file:line evidence. |
-| [`clean_protocol_results.md`](status/clean_protocol_results.md) | ✅ Current (2026-09-23). The honest held-out number under a clean train/val protocol, side by side with the superseded eval-selected one. |
+| [`repartition_results.md`](status/repartition_results.md) | ✅ Current (2026-09-23). Splits redrawn stratified by window; v2 eval NOT yet scored. Read before quoting any number. |
+| [`label_window_audit.md`](status/label_window_audit.md) | ✅ Current (2026-09-23). Traces the disjoint window to labels.xlsx. |
+| [`clean_protocol_results.md`](status/clean_protocol_results.md) | ⚠️ Superseded (2026-09-23). The honest held-out number under a clean train/val protocol, side by side with the superseded eval-selected one. |
 | [`eval_leakage_audit.md`](status/eval_leakage_audit.md) | ✅ Current (2026-09-22). Read-only audit showing the eval split was used for model and hyperparameter selection. |
 | [`results.md`](status/results.md) | ⚠️ **Pre-pivot throughout.** Every number is the old threshold system. |
 
