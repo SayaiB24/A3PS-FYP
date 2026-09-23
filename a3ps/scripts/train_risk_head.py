@@ -433,8 +433,19 @@ def batched_logits(model, batch):
     return [out[i, :lens[i]] for i in range(len(batch))]
 
 
+# How far above chance mean-AP has to be before a fa_target-noncompliant
+# epoch is trusted as the run's selection, rather than treated as a likely
+# collapse. Chance for AP on a clip set is its positive prevalence (a random
+# ranking's expected AP equals the fraction of positives), not a fixed 0.5 --
+# see ``train()``'s ``near_chance_ap`` computation. 0.05 was chosen because it
+# cleanly separates every case seen so far: a genuinely undertrained epoch
+# (mean AP 0.501 on a ~50/50 val set, effectively chance) from a real one
+# (mean AP 0.59-0.68) by more than an order of magnitude of margin.
+NEAR_CHANCE_AP_MARGIN = 0.05
+
+
 def train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
-    """Train the head, returning ``(best, history)``.
+    """Train the head, returning ``(best, history, fallback_used)``.
 
     ``on_improve(best)`` is called every time an epoch sets a new best validation
     score, and ``on_epoch(history)`` after every epoch. Both exist so the caller
@@ -447,12 +458,47 @@ def train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
     score for that many consecutive epochs, training stops. On a 1,365-clip set
     the head peaks within ~5-10 epochs and then overfits, so the default budget
     is mostly spent making the result worse.
+
+    Checkpoint selection and its fallback
+    --------------------------------------
+    The primary rule ranks epochs by ``(meets fa_target, useful-warning, -FA)``
+    (see the per-epoch loop below). When NO epoch in a run ever meets
+    ``fa_target`` -- which turned out to be every run seen so far at the
+    training loop's own scoring point -- that rule degrades to ranking purely
+    by useful-warning with FA as a tiebreak, and useful-warning alone cannot
+    tell a genuinely well-trained epoch from an undertrained one that happens
+    to fire conservatively. On seed 1236 that picked epoch 1 (mean AP 0.501,
+    chance) over epoch 6 (mean AP 0.648, real separation), because epoch 1's
+    lower confidence gave it a marginally better useful/FA pair despite
+    carrying almost no label information.
+
+    The fix is a second, independent running best -- ``best_by_ap``, tracked by
+    mean AP alone, never consulted for early stopping or the primary pick --
+    used ONLY as a fallback, and only when both are true: (a) the primary pick
+    never met ``fa_target`` during the run, and (b) the primary pick's own mean
+    AP is within :data:`NEAR_CHANCE_AP_MARGIN` of chance. This deliberately
+    does NOT touch runs like the ones that produced seeds 1234/1235 as
+    currently committed: those also never met ``fa_target``, but their
+    useful-first picks (mean AP 0.59-0.63) are nowhere near chance, so
+    condition (b) never fires and they are returned unchanged. Swapping in
+    ``best_by_ap`` sets ``fallback_used=True`` (also stamped in the checkpoint's
+    ``extra`` dict as ``selection_fallback_used``) and re-fires ``on_improve``
+    so the saved checkpoint on disk reflects the swap, not the near-chance pick
+    that was "best" for most of the run.
     """
     opt = torch.optim.Adam(model.parameters(), lr=args.lr,
                            weight_decay=args.weight_decay)
     best = None
+    best_by_ap = None              # independent running best, AP-ranked only;
+                                    # consulted solely by the fallback below.
     history = []
     stale = 0                      # epochs since the last improvement
+
+    n_pos_val = sum(1 for c in val_clips if c["label"] == 1)
+    n_neg_val = sum(1 for c in val_clips if c["label"] == 0)
+    n_val = n_pos_val + n_neg_val
+    chance_ap = (n_pos_val / n_val) if n_val else 0.5
+    near_chance_ap = chance_ap + NEAR_CHANCE_AP_MARGIN
 
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -512,6 +558,14 @@ def train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
         else:
             stale += 1
 
+        # Independent of the primary pick above: track the best-by-mean-AP
+        # epoch too, purely as a fallback candidate (see the function
+        # docstring). Never affects early stopping or on_improve on its own.
+        ap = val["mean_AP"]
+        if ap == ap and (best_by_ap is None or ap > best_by_ap["val"]["mean_AP"]):
+            best_by_ap = {"epoch": epoch, "val": val,
+                         "state": {k: v.clone() for k, v in model.state_dict().items()}}
+
         # flush=True: without it a redirected/piped run shows nothing until the
         # process exits, which makes a long run impossible to monitor.
         print(f"epoch {epoch:3d}  loss {train_loss:.4f}  "
@@ -540,7 +594,26 @@ def train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
     if agg["n_untimed"]:
         print(f"\nnote: {agg['n_untimed']} positive-clip batches lacked "
               "event/alert times -- those gave the loss no anticipation signal.")
-    return best, history
+
+    fallback_used = False
+    if (best is not None and best["rank"][0] == 0
+            and best["val"]["mean_AP"] == best["val"]["mean_AP"]
+            and best["val"]["mean_AP"] < near_chance_ap
+            and best_by_ap is not None and best_by_ap["epoch"] != best["epoch"]):
+        fallback_used = True
+        print(f"\n!! selection fallback: epoch {best['epoch']}'s mean AP "
+              f"({_fmt(best['val']['mean_AP'])}) is within "
+              f"{NEAR_CHANCE_AP_MARGIN} of chance ({_fmt(chance_ap)}) on this "
+              f"val set, and no epoch ever met fa_target. Using epoch "
+              f"{best_by_ap['epoch']} (mean AP {_fmt(best_by_ap['val']['mean_AP'])}) "
+              "instead -- see NEAR_CHANCE_AP_MARGIN.", flush=True)
+        best = {"score": best_by_ap["val"]["useful_warning_rate"],
+               "rank": best["rank"], "epoch": best_by_ap["epoch"],
+               "val": best_by_ap["val"], "state": best_by_ap["state"]}
+        if on_improve is not None:
+            on_improve(best)
+
+    return best, history, fallback_used
 
 
 def main():
@@ -677,6 +750,14 @@ def main():
           f"-> asks for a warning ~{expected_lead_time(0.0, 3.49, args.kappa):.2f}s "
           f"before impact on a mean-lead clip\n")
 
+    # Placeholder until train() returns the real value below. checkpoint_extra
+    # reads this by closure (Python resolves free variables at call time, not
+    # def time), so the mid-training on_improve writes see this False
+    # placeholder -- correct, since the fallback can only be decided once the
+    # whole run is known -- and the final save_best() call after train()
+    # returns sees the true value once `fallback_used` is reassigned.
+    fallback_used = False
+
     # Save-on-improvement. Defined here (not inside train()) so train() stays a
     # pure loop and the persistence policy lives with the CLI that owns the paths.
     def checkpoint_extra(b):
@@ -694,6 +775,16 @@ def main():
             "val": {k: (v[k] if not isinstance(v[k], dict) else
                         {str(a): c for a, c in v[k].items()}) for k in v},
             "leakage_warning": bool(args.allow_leakage and same_dir),
+            # Whether ANY epoch in this run met --fa-target. False means the
+            # primary (fa_target, useful-warning, -FA) rank rule fell back to
+            # comparing on useful-warning alone across every epoch -- see
+            # train()'s docstring.
+            "fa_target_met": bool(b["rank"][0] == 1),
+            # True only if that fallback ALSO produced a near-chance pick,
+            # triggering the mean-AP-based override. False (including on runs
+            # where fa_target_met is also False) means the useful-first
+            # fallback pick was kept because its mean AP was not near chance.
+            "selection_fallback_used": bool(fallback_used),
         }
 
     def save_best(b):
@@ -717,8 +808,8 @@ def main():
             json.dump(h, fh, indent=2)
 
     t0 = time.perf_counter()
-    best, history = train(model, train_clips, val_clips, args,
-                          on_improve=save_best, on_epoch=save_history)
+    best, history, fallback_used = train(model, train_clips, val_clips, args,
+                                         on_improve=save_best, on_epoch=save_history)
     print(f"\ntrained in {time.perf_counter() - t0:.0f}s")
 
     if best is None:
@@ -735,6 +826,9 @@ def main():
     for tau in sorted(v["AP"]):
         print(f"  AP @ -{tau * 1000:.0f} ms      : {_fmt(v['AP'][tau])}")
     print(f"  mean AP             : {_fmt(v['mean_AP'])}")
+    print(f"  fa_target ever met  : {bool(best['rank'][0] == 1)}")
+    print(f"  selection fallback  : {fallback_used}"
+          f"{' (near-chance override fired)' if fallback_used else ''}")
 
     # Both were already written during training (save-on-improvement above); these
     # final writes just guarantee the on-disk copy matches the returned best.

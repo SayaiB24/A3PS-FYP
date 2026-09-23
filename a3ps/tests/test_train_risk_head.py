@@ -190,7 +190,7 @@ def test_ablation_zeroes_val_features_too(tmp_path, monkeypatch):
 
     def fake_train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
         seen["train"], seen["val"] = train_clips, val_clips
-        return None, []
+        return None, [], False
 
     monkeypatch.setattr(trh, "train", fake_train)
     monkeypatch.setattr(sys, "argv", [
@@ -270,7 +270,7 @@ def test_final_eval_report_flag_permits_the_single_final_read(tmp_path, monkeypa
 
     def fake_train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
         reached["yes"] = True
-        return None, []
+        return None, [], False
 
     monkeypatch.setattr(trh, "train", fake_train)
     monkeypatch.setattr(sys, "argv", [
@@ -631,3 +631,114 @@ def test_v2_useful_set_is_a_superset_of_legacy_across_the_full_grid():
                                        v["n_useful"], v["n_useful_v2"]))
 
     assert not violations, f"v2 scored below legacy on: {violations}"
+
+
+# ---------------------------------------------------------------------------
+# checkpoint-selection fallback: near-chance picks must not be kept silently
+# -- docs/status/selection_fix_and_tradeoff.md
+# ---------------------------------------------------------------------------
+
+def test_train_selection_fallback_picks_best_ap_not_near_chance_epoch(monkeypatch):
+    """When no epoch ever meets fa_target AND the useful-first pick is near
+    chance, train() must fall back to the best-mean-AP epoch and report
+    fallback_used=True -- this is the seed-1236 bug (epoch 1, mean AP 0.501,
+    chance, beat epoch 6, mean AP 0.648, real separation, purely because
+    epoch 1 had a marginally better useful/-FA pair) reproduced deterministically.
+    """
+    import train_risk_head as trh
+
+    # Scripted per-epoch validation: epoch 1 has the best useful/-FA pair (the
+    # OLD rule keeps it) but chance-level AP; epoch 3 has real separation but
+    # loses the primary tiebreak. None meet fa_target=0.20.
+    scripted = [
+        (0.50, 0.40, 0.51),   # epoch 1: wins on useful/-FA, chance-level AP
+        (0.30, 0.60, 0.55),   # epoch 2: loses both
+        (0.40, 0.45, 0.75),   # epoch 3: real separation, loses on useful/-FA
+    ]
+
+    def fake_evaluate(model, clips, threshold, confirm=3, dump_rows=False):
+        useful, fa, ap = scripted[min(fake_evaluate.calls, len(scripted) - 1)]
+        fake_evaluate.calls += 1
+        return {"n_clips": 20, "n_timed": 10, "useful_warning_rate": useful,
+                "n_useful": int(round(useful * 10)), "n_too_early": 0,
+                "false_alarm_rate": fa, "mean_lead_s": 1.0,
+                "AP": {0.5: ap, 1.0: ap, 1.5: ap}, "mean_AP": ap}
+    fake_evaluate.calls = 0
+
+    monkeypatch.setattr(trh, "evaluate", fake_evaluate)
+
+    m = _model(seed=1)
+    train_clips = [_clip(40, 1, label=1, alert=1.0, event=3.0),
+                  _clip(40, 2, label=0)]
+    val_clips = [_clip(20, i, label=1 if i % 2 else 0) for i in range(20)]
+
+    class Args:
+        lr = 1e-3
+        weight_decay = 1e-4
+        grad_clip = 5.0
+        seed = 1
+        batch_size = 2
+        kappa = 3.0
+        pre_alert_weight = 0.5
+        pos_weight = 1.0
+        threshold = 0.5
+        confirm = 3
+        fa_target = 0.20
+        epochs = 3
+        patience = 0
+
+    best, history, fallback_used = trh.train(m, train_clips, val_clips, Args())
+
+    assert fallback_used is True
+    assert best["epoch"] == 3
+    assert best["val"]["mean_AP"] == pytest.approx(0.75)
+    assert best["rank"][0] == 0        # fa_target was never met this run
+
+
+def test_train_no_fallback_when_useful_first_pick_is_not_near_chance(monkeypatch):
+    """A run that never meets fa_target but whose useful-first pick has real
+    separation (like the currently-committed seeds 1234/1235) must be
+    returned UNCHANGED -- the fallback only fires for near-chance picks."""
+    import train_risk_head as trh
+
+    scripted = [
+        (0.34, 0.67, 0.63),   # epoch 1: wins useful/-FA, AND has real AP
+        (0.29, 0.63, 0.59),
+    ]
+
+    def fake_evaluate(model, clips, threshold, confirm=3, dump_rows=False):
+        useful, fa, ap = scripted[min(fake_evaluate.calls, len(scripted) - 1)]
+        fake_evaluate.calls += 1
+        return {"n_clips": 20, "n_timed": 10, "useful_warning_rate": useful,
+                "n_useful": int(round(useful * 10)), "n_too_early": 0,
+                "false_alarm_rate": fa, "mean_lead_s": 1.0,
+                "AP": {0.5: ap, 1.0: ap, 1.5: ap}, "mean_AP": ap}
+    fake_evaluate.calls = 0
+
+    monkeypatch.setattr(trh, "evaluate", fake_evaluate)
+
+    m = _model(seed=1)
+    train_clips = [_clip(40, 1, label=1, alert=1.0, event=3.0),
+                  _clip(40, 2, label=0)]
+    val_clips = [_clip(20, i, label=1 if i % 2 else 0) for i in range(20)]
+
+    class Args:
+        lr = 1e-3
+        weight_decay = 1e-4
+        grad_clip = 5.0
+        seed = 1
+        batch_size = 2
+        kappa = 3.0
+        pre_alert_weight = 0.5
+        pos_weight = 1.0
+        threshold = 0.5
+        confirm = 3
+        fa_target = 0.20
+        epochs = 2
+        patience = 0
+
+    best, history, fallback_used = trh.train(m, train_clips, val_clips, Args())
+
+    assert fallback_used is False
+    assert best["epoch"] == 1
+    assert best["val"]["mean_AP"] == pytest.approx(0.63)
