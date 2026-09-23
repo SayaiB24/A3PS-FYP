@@ -266,14 +266,24 @@ def find_alert_episodes(probs: torch.Tensor,
 
     Each episode is a dict ``{"confirm_t", "start_t", "end_t"}``:
 
-    * ``confirm_t`` -- the frame at which the run first reaches ``confirm``
-      consecutive hits. Identical to what ``first_alert_time`` would return if
-      this were the first episode in the clip.
-    * ``start_t`` / ``end_t`` -- the run's actual first/last frame. The
-      episode's *active interval* (from
-      ``docs/design/useful_warning_definition.md``) is ``[confirm_t, end_t]``,
-      not ``[start_t, end_t]``: the model is not credited with knowing
-      anything before its own debounce has confirmed.
+    * ``confirm_t`` -- the run's own first frame. Identical in convention to
+      what ``first_alert_time`` returns for the first qualifying run in a
+      clip: both credit the START of the run, not the frame at which the
+      ``confirm``-frame debounce completes. This matters, not just for
+      consistency: crediting the debounce-completion frame instead can push
+      ``confirm_t`` past ``event_t`` for a run that started well inside the
+      actionable window, which would make the corrected definition credit
+      *fewer* clips than the legacy one on some grid points -- the opposite of
+      what it exists to fix. ``first_alert_time``'s own comment already
+      states the reasoning: "the model actually knew at i-need+1, and
+      charging it the debounce delay would understate its lead time." Using
+      the same convention here is what guarantees every clip ``useful`` under
+      the legacy definition is also ``useful`` under the corrected one.
+    * ``start_t`` -- identical to ``confirm_t`` (kept as a separate key for
+      readability at call sites, e.g. ``docs/status/metric_fix_results.md``'s
+      per-clip dumps). ``end_t`` -- the run's actual last frame. The episode's
+      *active interval* (``docs/design/useful_warning_definition.md``) is
+      ``[confirm_t, end_t]``.
     """
     if probs.ndim != 1 or probs.shape != t.shape:
         raise ValueError("probs and t must be 1-D and equal length")
@@ -291,7 +301,7 @@ def find_alert_episodes(probs: torch.Tensor,
             j += 1
         if j - i >= need:
             episodes.append({
-                "confirm_t": float(t[i + need - 1]),
+                "confirm_t": float(t[i]),
                 "start_t": float(t[i]),
                 "end_t": float(t[j - 1]),
             })

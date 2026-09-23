@@ -98,10 +98,27 @@ changing it because it scores better, would not be.
 ## 4. The corrected definition
 
 An **alert episode** is a maximal run of consecutive frames with `p ≥
-threshold`. An episode becomes **confirmed** at the frame where the run first
-reaches `confirm` consecutive frames (identical to the existing debounce), and
-is **active** from that confirmation frame through the last frame of the run
-(i.e. until `p` drops below `threshold`).
+threshold`, and it must be at least `confirm` frames long to count at all (the
+existing debounce). An episode is **confirmed at its own first frame** — the
+same crediting convention `first_alert_time` already uses and explains in its
+own comment: "the model actually knew at i-need+1, and charging it the
+debounce delay would understate its lead time"
+(`a3ps/risk/anticipation_loss.py:244-246`). It is **active** from that first
+frame through the run's last frame (i.e. until `p` drops below `threshold`).
+
+**Correction, found during implementation:** an earlier draft of this
+definition read "confirmed at the frame where the run reaches `confirm`
+consecutive frames" — i.e. the frame at which the debounce completes, not the
+run's own start. Implementing that literally produced a real defect: on 6 of
+45 grid points across the three `train_val_v2` checkpoints, a long `confirm`
+value could push the debounce-completion frame of an early-starting run past
+`event_t`, so the corrected definition credited *fewer* clips as `useful` than
+the legacy one (worst case 32/103 → 24/103 at one operating point) — the
+opposite of what this definition exists to fix, and a violation of §5's
+superset guarantee below. Crediting the run's own start, matching
+`first_alert_time`, closes that gap: every clip `useful` under the legacy
+definition is provably `useful` under the corrected one, because the legacy
+fire time and the corrected confirmation time are now the same quantity.
 
 - **useful**: at least one episode's *active interval* — `[confirmation frame,
   last frame of the run]` — intersects `[alert_t, event_t]`. Intersects means
