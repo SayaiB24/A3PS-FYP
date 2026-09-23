@@ -1,6 +1,11 @@
 {
  "clips": [
   {
+   "id": "206",
+   "group": "Phase IV \u2014 learned vs threshold system",
+   "label": "206 \u00b7 pos \u00b7 learned useful / old too early"
+  },
+  {
    "id": "488",
    "group": "Phase IV \u2014 learned vs threshold system",
    "label": "488 \u00b7 pos \u00b7 learned useful / old too early"
@@ -11,9 +16,19 @@
    "label": "621 \u00b7 pos \u00b7 learned useful / old too early"
   },
   {
+   "id": "630",
+   "group": "Phase IV \u2014 learned vs threshold system",
+   "label": "630 \u00b7 pos \u00b7 learned miss / old too early"
+  },
+  {
    "id": "690",
    "group": "Phase IV \u2014 learned vs threshold system",
    "label": "690 \u00b7 pos \u00b7 learned useful / old too early"
+  },
+  {
+   "id": "932",
+   "group": "Phase IV \u2014 learned vs threshold system",
+   "label": "932 \u00b7 pos \u00b7 learned useful / old too early"
   },
   {
    "id": "1004",
@@ -39,6 +54,16 @@
    "id": "1261",
    "group": "Phase IV \u2014 learned vs threshold system",
    "label": "1261 \u00b7 neg \u00b7 learned clean / old false alarm"
+  },
+  {
+   "id": "1426",
+   "group": "Phase IV \u2014 learned vs threshold system",
+   "label": "1426 \u00b7 neg \u00b7 learned clean / old false alarm"
+  },
+  {
+   "id": "1564",
+   "group": "Phase IV \u2014 learned vs threshold system",
+   "label": "1564 \u00b7 neg \u00b7 learned clean / old false alarm"
   },
   {
    "id": "dev04",
