@@ -138,36 +138,73 @@ def split_by_clip(clips, val_frac, seed):
 # evaluation
 # ---------------------------------------------------------------------------
 
-def evaluate(model, clips, threshold, cutoffs=(0.5, 1.0, 1.5), confirm=3):
-    """Useful-warning rate, cutoff APs and lead time on a clip list."""
+def evaluate(model, clips, threshold, cutoffs=(0.5, 1.0, 1.5), confirm=3,
+            dump_rows=False):
+    """Useful-warning rate, cutoff APs and lead time on a clip list.
+
+    ``dump_rows=True`` adds a ``"rows"`` key to the returned dict: one dict per
+    clip with the per-clip quantities the aggregate numbers below are computed
+    from (verdict, fire time, lead, etc). It surfaces values this function
+    already computes -- no scoring logic changes, and default callers get the
+    exact same dict they always did (no ``"rows"`` key at all), so nothing
+    downstream is affected. See ``tests/test_train_risk_head.py`` for a test
+    that the dumped rows reproduce these aggregates.
+    """
     model.eval()
     timelines, rows = [], []
     with torch.no_grad():
         for c in clips:
             probs = torch.sigmoid(model(c["X"]))
             fa = first_alert_time(probs, c["t"], threshold, confirm)
+            peak_i = int(torch.argmax(probs))
             rows.append({"clip": c, "first_alert_t": fa,
-                         "peak": float(probs.max())})
+                         "peak": float(probs.max()),
+                         "peak_t": float(c["t"][peak_i])})
             timelines.append(list(zip(c["t"].tolist(), probs.tolist())))
 
     useful = early = n_timed = 0
     leads, fa_neg = [], 0
+    detail = []
     for r in rows:
         c = r["clip"]
         te, ta, fa = c["event_time_s"], c["alert_time_s"], r["first_alert_t"]
+        window = (te - ta) if (te is not None and ta is not None) else None
+
         if c["label"] == 0:
             fa_neg += int(fa is not None)
+            detail.append({
+                "clip_id": c["clip_id"], "label": 0, "alert_t": ta, "event_t": te,
+                "window_s": window, "first_fire_t": fa,
+                "verdict": "false_alarm" if fa is not None else "clean",
+                "lead_s": None, "offset_from_alert_s": None,
+                "peak_prob": r["peak"], "peak_t": r["peak_t"]})
             continue
         if te is None or ta is None:
+            detail.append({
+                "clip_id": c["clip_id"], "label": 1, "alert_t": ta, "event_t": te,
+                "window_s": window, "first_fire_t": fa, "verdict": "untimed",
+                "lead_s": None, "offset_from_alert_s": None,
+                "peak_prob": r["peak"], "peak_t": r["peak_t"]})
             continue
         n_timed += 1
-        if fa is None or fa > te:
-            continue
-        leads.append(te - fa)
-        if fa < ta:
+        if fa is None:
+            verdict, lead = "missed", None
+        elif fa > te:
+            verdict, lead = "late", None
+        elif fa < ta:
+            verdict, lead = "too_early", (te - fa)
             early += 1
         else:
+            verdict, lead = "useful", (te - fa)
             useful += 1
+        if verdict in ("useful", "too_early"):
+            leads.append(te - fa)
+        detail.append({
+            "clip_id": c["clip_id"], "label": 1, "alert_t": ta, "event_t": te,
+            "window_s": window, "first_fire_t": fa, "verdict": verdict,
+            "lead_s": lead,
+            "offset_from_alert_s": (fa - ta) if fa is not None else None,
+            "peak_prob": r["peak"], "peak_t": r["peak_t"]})
 
     def ap_at(tau):
         scores, labels = [], []
@@ -187,7 +224,7 @@ def evaluate(model, clips, threshold, cutoffs=(0.5, 1.0, 1.5), confirm=3):
     aps = {tau: ap_at(tau) for tau in cutoffs}
     finite = [v for v in aps.values() if v == v]
     n_neg = sum(1 for r in rows if r["clip"]["label"] == 0)
-    return {
+    out = {
         "n_clips": len(rows),
         "n_timed": n_timed,
         "useful_warning_rate": (useful / n_timed) if n_timed else float("nan"),
@@ -198,6 +235,9 @@ def evaluate(model, clips, threshold, cutoffs=(0.5, 1.0, 1.5), confirm=3):
         "AP": aps,
         "mean_AP": (sum(finite) / len(finite)) if finite else float("nan"),
     }
+    if dump_rows:
+        out["rows"] = detail
+    return out
 
 
 def _fmt(x, nd=3):

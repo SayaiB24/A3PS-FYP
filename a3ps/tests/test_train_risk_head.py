@@ -317,3 +317,71 @@ def test_sweep_operating_point_refuses_eval_clips(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as e:
         sop.main()
     assert "train_val" in str(e.value)
+
+
+# ---------------------------------------------------------------------------
+# per-clip dump must reproduce evaluate()'s own aggregates
+# ---------------------------------------------------------------------------
+
+def test_dump_rows_reproduces_aggregates():
+    """evaluate(dump_rows=True) must not be a second, divergent scoring path.
+
+    Built for docs/status/early_firing_diagnosis.md: the per-clip dump is only
+    trustworthy if it is a readout of the exact numbers evaluate() already
+    returns, not a parallel computation that could silently disagree.
+    """
+    import train_risk_head as trh
+
+    m = _model(seed=7)
+    clips = [
+        dict(_clip(60, 1, label=1, alert=1.5, event=4.0), clip_id="p_useful"),
+        dict(_clip(60, 2, label=1, alert=2.5, event=4.5), clip_id="p_early"),
+        dict(_clip(60, 3, label=1, alert=None, event=None), clip_id="p_untimed"),
+        dict(_clip(60, 4, label=0), clip_id="n_a"),
+        dict(_clip(60, 5, label=0), clip_id="n_b"),
+    ]
+    threshold, confirm = 0.5, 3
+
+    summary = trh.evaluate(m, clips, threshold, confirm=confirm)
+    dumped = trh.evaluate(m, clips, threshold, confirm=confirm, dump_rows=True)
+
+    # Same aggregate numbers with the flag on or off -- dumping never perturbs
+    # scoring.
+    for k in ("n_clips", "n_timed", "useful_warning_rate", "n_useful",
+              "n_too_early", "false_alarm_rate", "mean_lead_s", "mean_AP"):
+        a, b = summary[k], dumped[k]
+        if a == a:  # not NaN
+            assert a == pytest.approx(b, nan_ok=True)
+        else:
+            assert b != b
+
+    rows = dumped["rows"]
+    assert {r["clip_id"] for r in rows} == {c["clip_id"] for c in clips}
+
+    # n_timed / n_useful / n_too_early / false_alarm_rate recomputed from the
+    # dumped verdicts must match evaluate()'s own counters exactly.
+    n_timed = sum(1 for r in rows if r["label"] == 1 and r["verdict"] != "untimed")
+    n_useful = sum(1 for r in rows if r["verdict"] == "useful")
+    n_early = sum(1 for r in rows if r["verdict"] == "too_early")
+    n_neg = sum(1 for r in rows if r["label"] == 0)
+    n_fa = sum(1 for r in rows if r["verdict"] == "false_alarm")
+    assert n_timed == dumped["n_timed"]
+    assert n_useful == dumped["n_useful"] == summary["n_useful"]
+    assert n_early == dumped["n_too_early"] == summary["n_too_early"]
+    fa_rate = n_fa / n_neg if n_neg else float("nan")
+    assert fa_rate == pytest.approx(dumped["false_alarm_rate"])
+
+    # mean_lead_s must equal the mean of dumped lead_s over useful+too_early
+    # verdicts, exactly as evaluate()'s own `leads` list is built.
+    leads = [r["lead_s"] for r in rows if r["verdict"] in ("useful", "too_early")]
+    if leads:
+        assert sum(leads) / len(leads) == pytest.approx(dumped["mean_lead_s"])
+    else:
+        assert dumped["mean_lead_s"] != dumped["mean_lead_s"]
+
+    # The untimed positive must be excluded from n_timed, exactly like
+    # evaluate()'s own `continue` on `te is None or ta is None`.
+    untimed = [r for r in rows if r["clip_id"] == "p_untimed"][0]
+    assert untimed["verdict"] == "untimed"
+    assert untimed["clip_id"] not in {
+        r["clip_id"] for r in rows if r["verdict"] in ("useful", "too_early", "missed", "late")}
