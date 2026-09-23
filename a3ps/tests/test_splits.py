@@ -186,10 +186,18 @@ def test_verify_flags_a_label_change_without_mutating_records():
 # ---------------------------------------------------------------------------
 
 def test_committed_freeze_matches_the_index_it_was_drawn_from():
-    """eval/split_freeze.json must agree with eval/nexar_index_gpu.csv.
+    """eval/split_freeze.json's dev/eval must agree with eval/nexar_index_gpu.csv.
 
     This is the guard that fires if someone re-runs prepare_nexar.py over a
     grown clip pool and commits the result.
+
+    Only dev/eval are checked here: that index is the 355-row snapshot those two
+    splits were frozen from, and it predates the full 1,500-clip pool that
+    ``train_val`` was later carved out of (``scripts/carve_train_val.py``). So
+    ``train_val`` clips are legitimately absent from it, and checking them
+    against it would fail for a reason that has nothing to do with drift.
+    ``train_val`` is verified against the live ``data/nexar/index.csv`` by the
+    carve script instead.
     """
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     freeze_path = os.path.join(root, "eval", "split_freeze.json")
@@ -203,5 +211,10 @@ def test_committed_freeze_matches_the_index_it_was_drawn_from():
                     "split": r.get("split", "") or ""}
                    for r in csv.DictReader(fh)]
 
-    ok, problems = verify_freeze(records, load_freeze(freeze_path))
+    freeze = load_freeze(freeze_path)
+    covered = {"dev", "eval"}
+    freeze = dict(freeze, clips={cid: m for cid, m in freeze["clips"].items()
+                                 if m["split"] in covered})
+
+    ok, problems = verify_freeze(records, freeze)
     assert ok, "held-out split drifted:\n" + "\n".join(problems[:20])

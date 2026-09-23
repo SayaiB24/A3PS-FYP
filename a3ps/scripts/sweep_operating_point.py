@@ -42,15 +42,24 @@ import torch  # noqa: E402
 
 from a3ps.risk.temporal import RiskGRU  # noqa: E402
 
-from train_risk_head import evaluate, load_clips, _fmt  # noqa: E402
+from a3ps.common.splits import DEFAULT_FREEZE_PATH  # noqa: E402
+
+from train_risk_head import evaluate, guard_held_out, load_clips, _fmt  # noqa: E402
 
 
 def main():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--checkpoint", default="notebooks/models/risk_gru_v1.pt")
-    p.add_argument("--features", default="data/features/eval",
-                   help="Directory of .npz features to score (the held-out split).")
+    # No default. This used to default to data/features/eval, so the operating
+    # point was picked on the held-out split by simply not passing a flag --
+    # see docs/status/eval_leakage_audit.md. Choosing an operating point is
+    # selection, so it belongs on data/features/train_val.
+    p.add_argument("--features", required=True,
+                   help="Directory of .npz features to score. Use "
+                        "data/features/train_val to CHOOSE an operating point; "
+                        "data/features/eval is only for the single final read, "
+                        "and then only with --final-eval-report.")
     p.add_argument("--thresholds", default="0.5,0.6,0.7,0.8,0.9",
                    help="Comma-separated probability thresholds to try.")
     p.add_argument("--confirms", default="3,5,8",
@@ -59,7 +68,17 @@ def main():
                    help="False-alarm rate to flag as acceptable (default 0.20, "
                         "per docs/design/metrics.md).")
     p.add_argument("--out", default="eval/operating_point_sweep.md")
+    p.add_argument("--split-freeze", default=DEFAULT_FREEZE_PATH,
+                   help="Frozen split membership consulted by the held-out "
+                        "guard (default %(default)s).")
+    p.add_argument("--final-eval-report", action="store_true",
+                   help="Permit scoring clips frozen as the held-out split. "
+                        "Only legitimate when the operating point is ALREADY "
+                        "fixed and this is the single final read.")
     args = p.parse_args()
+
+    guard_held_out(args.features, "--features", args.split_freeze,
+                   args.final_eval_report, "--final-eval-report")
 
     thresholds = [float(x) for x in args.thresholds.split(",") if x.strip()]
     confirms = [int(x) for x in args.confirms.split(",") if x.strip()]

@@ -41,6 +41,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import torch  # noqa: E402
 
+from a3ps.common.splits import (  # noqa: E402
+    DEFAULT_FREEZE_PATH,
+    HELD_OUT_SPLIT,
+    held_out_clips_in,
+    load_freeze,
+)
 from a3ps.features.extract import frame_feature_dim, load_features  # noqa: E402
 from a3ps.risk.anticipation_loss import (  # noqa: E402
     DEFAULT_KAPPA,
@@ -74,6 +80,42 @@ def load_clips(feature_dir):
             "has_ego": bool(meta.get("has_ego", False)),
         })
     return out
+
+
+def guard_held_out(feature_dir, role, freeze_path, allowed, override_flag):
+    """Refuse to touch the frozen held-out split for anything but final reporting.
+
+    The pre-existing ``--allow-leakage`` guard only fired when ``--features``
+    and ``--val-features`` were the *same directory*. ``train_all`` vs ``eval``
+    are different directories, so it stayed silent while every checkpoint in
+    this project was early-stopped and best-epoch-selected on the test set, and
+    while the operating point, kappa and capacity calls were made on
+    eval-scored numbers (``docs/status/eval_leakage_audit.md``).
+
+    A number is only held-out if nothing upstream of it consulted these clips.
+    So the default is refusal, and reading eval has to be an explicit, one-line
+    statement of intent rather than the path of least resistance.
+    """
+    if not feature_dir:
+        return
+    hits = held_out_clips_in(feature_dir, load_freeze(freeze_path))
+    if not hits:
+        return
+    if allowed:
+        print(f"!! {override_flag}: {role} is {feature_dir}, which contains "
+              f"{len(hits)} clip(s) frozen as '{HELD_OUT_SPLIT}'. This must be a "
+              "FINAL REPORT on an already-fixed checkpoint and operating point. "
+              "Anything selected after reading this is no longer held out.",
+              flush=True)
+        return
+    raise SystemExit(
+        f"{role} resolves to {feature_dir}, which contains {len(hits)} clip(s) "
+        f"frozen as '{HELD_OUT_SPLIT}' in {freeze_path} (e.g. {hits[:5]}).\n"
+        "Selecting anything against the held-out split -- best epoch, early "
+        "stopping, threshold, kappa -- makes the final number a selection "
+        "result, not a held-out one. Point this at data/features/train_val "
+        f"instead.\nIf the checkpoint and operating point are already fixed and "
+        f"this is the single final read, pass {override_flag}.")
 
 
 def split_by_clip(clips, val_frac, seed):
@@ -414,7 +456,20 @@ def main():
     p.add_argument("--allow-leakage", action="store_true",
                    help="Permit train and val to be the same clips. Produces a "
                         "plumbing check, NOT a result.")
+    p.add_argument("--split-freeze", default=DEFAULT_FREEZE_PATH,
+                   help="Frozen split membership consulted by the held-out "
+                        "guard (default %(default)s).")
+    p.add_argument("--final-eval-report", action="store_true",
+                   help="Permit --features/--val-features to contain clips "
+                        "frozen as the held-out split. Only legitimate when the "
+                        "checkpoint and operating point are ALREADY fixed and "
+                        "this is the single final read.")
     args = p.parse_args()
+
+    guard_held_out(args.features, "--features", args.split_freeze,
+                   args.final_eval_report, "--final-eval-report")
+    guard_held_out(args.val_features, "--val-features", args.split_freeze,
+                   args.final_eval_report, "--final-eval-report")
 
     torch.manual_seed(args.seed)
     random.seed(args.seed)

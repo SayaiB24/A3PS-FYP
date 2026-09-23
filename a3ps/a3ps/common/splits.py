@@ -30,7 +30,19 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 # Splits that are frozen once recorded. ``train_traj`` is deliberately absent:
 # it is the only split allowed to grow.
-FROZEN_SPLITS = ("dev", "eval")
+#
+# ``train_val`` is frozen for a different reason than ``dev``/``eval``. It is not
+# held out from training to be a test set -- it is the set that early stopping,
+# best-epoch, kappa and the operating point are chosen on. If its membership
+# drifted, a "clean" selection run could quietly start selecting on clips the
+# next run trains on, which is the same failure the eval freeze exists to stop,
+# one layer in. See ``scripts/carve_train_val.py``.
+FROZEN_SPLITS = ("dev", "eval", "train_val")
+
+# The split that must never be scored during selection. Kept as a name rather
+# than a literal so the guards in train_risk_head.py / sweep_operating_point.py
+# and this module agree on what "the test set" means.
+HELD_OUT_SPLIT = "eval"
 
 DEFAULT_FREEZE_PATH = os.path.join("eval", "split_freeze.json")
 
@@ -196,6 +208,34 @@ def apply_freeze(records: List[Dict[str, Any]],
         "unpinned_positives": sorted(unpinned_positives, key=_sort_key),
         "counts": counts,
     }
+
+
+def feature_dir_clip_ids(feature_dir: str) -> List[str]:
+    """Clip ids of the ``.npz`` files in a feature directory, normalised."""
+    if not os.path.isdir(feature_dir):
+        return []
+    return [normalize_clip_id(os.path.splitext(f)[0])
+            for f in os.listdir(feature_dir) if f.endswith(".npz")]
+
+
+def held_out_clips_in(feature_dir: str,
+                      freeze: Optional[Dict[str, Any]],
+                      split: str = HELD_OUT_SPLIT) -> List[str]:
+    """Clip ids in ``feature_dir`` that the freeze records as ``split``.
+
+    The plumbing guard in ``train_risk_head.py`` only ever caught
+    ``--features`` and ``--val-features`` being the *same directory*. Pointing
+    ``--val-features`` at ``data/features/eval`` is a different directory, so
+    that guard stayed silent while every checkpoint in the project was
+    early-stopped on the test set. This is the lookup that closes it: a
+    non-empty result means the caller is about to select on held-out clips.
+    """
+    if not freeze:
+        return []
+    frozen = freeze.get("clips", {})
+    present = set(feature_dir_clip_ids(feature_dir))
+    return sorted((cid for cid in present
+                   if frozen.get(cid, {}).get("split") == split), key=_sort_key)
 
 
 def verify_freeze(records: Iterable[Dict[str, Any]],

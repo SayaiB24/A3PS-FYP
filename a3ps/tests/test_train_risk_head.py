@@ -203,3 +203,117 @@ def test_ablation_zeroes_val_features_too(tmp_path, monkeypatch):
             assert (c["X"][:, ego_cols] == 0).all(), f"ego not zeroed on {side}"
             other = [j for j in range(dim) if j not in ego_cols]
             assert (c["X"][:, other] == 1).all(), f"non-ego columns altered on {side}"
+
+
+# ---------------------------------------------------------------------------
+# the held-out split must not be reachable by selection
+# ---------------------------------------------------------------------------
+
+def _freeze_with_eval(tmp_path, eval_ids):
+    """Write a minimal freeze file naming ``eval_ids`` as the held-out split."""
+    import json
+    path = tmp_path / "split_freeze.json"
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "counts": {"eval": {"pos": len(eval_ids), "neg": 0}},
+        "clips": {str(c): {"split": "eval", "label": 1} for c in eval_ids},
+    }), encoding="utf-8")
+    return str(path)
+
+
+def _feature_dir(tmp_path, name, clip_ids):
+    import numpy as np
+    from a3ps.features.extract import frame_feature_dim, save_features
+
+    dim = frame_feature_dim()
+    for i, cid in enumerate(clip_ids):
+        feats = {"X": np.ones((20, dim), np.float32), "t": np.arange(20) * 0.1,
+                 "n_actors": np.ones(20), "has_ego": True}
+        meta = {"clip_id": str(cid), "label": i % 2,
+                "event_time_s": 1.5 if i % 2 else None,
+                "alert_time_s": 0.5 if i % 2 else None}
+        save_features(str(tmp_path / name / f"{cid}.npz"), feats, meta)
+    return str(tmp_path / name)
+
+
+def test_val_features_on_the_frozen_eval_split_is_refused(tmp_path, monkeypatch):
+    """--val-features pointing at eval clips must refuse, not just warn.
+
+    The old --allow-leakage guard compared *directories*, so `--features
+    train_all --val-features eval` passed it while early-stopping every
+    checkpoint on the test set (docs/status/eval_leakage_audit.md). Different
+    directories, same leak.
+    """
+    import train_risk_head as trh
+
+    train_dir = _feature_dir(tmp_path, "tr", [901, 902])
+    val_dir = _feature_dir(tmp_path, "held", [11, 12])
+    freeze = _freeze_with_eval(tmp_path, [11, 12])
+
+    monkeypatch.setattr(sys, "argv", [
+        "train_risk_head.py", "--features", train_dir,
+        "--val-features", val_dir, "--split-freeze", freeze])
+    with pytest.raises(SystemExit) as e:
+        trh.main()
+    assert "eval" in str(e.value) and "train_val" in str(e.value)
+
+
+def test_final_eval_report_flag_permits_the_single_final_read(tmp_path, monkeypatch):
+    """The refusal is overridable, but only by saying so explicitly."""
+    import train_risk_head as trh
+
+    train_dir = _feature_dir(tmp_path, "tr2", [903, 904])
+    val_dir = _feature_dir(tmp_path, "held2", [21, 22])
+    freeze = _freeze_with_eval(tmp_path, [21, 22])
+
+    reached = {}
+
+    def fake_train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
+        reached["yes"] = True
+        return None, []
+
+    monkeypatch.setattr(trh, "train", fake_train)
+    monkeypatch.setattr(sys, "argv", [
+        "train_risk_head.py", "--features", train_dir,
+        "--val-features", val_dir, "--split-freeze", freeze,
+        "--final-eval-report"])
+    trh.main()
+    assert reached.get("yes")
+
+
+def test_training_on_the_frozen_eval_split_is_refused(tmp_path, monkeypatch):
+    """--features is guarded too: training on eval is worse than validating on it."""
+    import train_risk_head as trh
+
+    train_dir = _feature_dir(tmp_path, "held3", [31, 32])
+    freeze = _freeze_with_eval(tmp_path, [31, 32])
+
+    monkeypatch.setattr(sys, "argv", [
+        "train_risk_head.py", "--features", train_dir, "--split-freeze", freeze])
+    with pytest.raises(SystemExit) as e:
+        trh.main()
+    assert "--features" in str(e.value)
+
+
+def test_sweep_operating_point_has_no_eval_default(tmp_path, monkeypatch):
+    """--features is required: the sweep can no longer land on eval by default."""
+    import sweep_operating_point as sop
+
+    monkeypatch.setattr(sys, "argv", ["sweep_operating_point.py"])
+    with pytest.raises(SystemExit):
+        sop.main()
+
+
+def test_sweep_operating_point_refuses_eval_clips(tmp_path, monkeypatch):
+    """Choosing an operating point on the held-out split must refuse."""
+    import sweep_operating_point as sop
+
+    feats = _feature_dir(tmp_path, "held4", [41, 42])
+    freeze = _freeze_with_eval(tmp_path, [41, 42])
+
+    monkeypatch.setattr(sys, "argv", [
+        "sweep_operating_point.py", "--features", feats,
+        "--split-freeze", freeze])
+    with pytest.raises(SystemExit) as e:
+        sop.main()
+    assert "train_val" in str(e.value)
