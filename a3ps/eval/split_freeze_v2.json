@@ -1,0 +1,1380 @@
+{
+  "schema_version": 1,
+  "note": "v2, frozen 2026-09-23. Supersedes eval/split_freeze.json, which is kept on disk and still guarded. v1's dev/eval came from labels.xlsx, a hand-built subset sorted by alert-to-event window descending and cut at the 65 longest clips in the dataset, so the held-out split held every window over 2.97 s and training none. v2 redraws eval/train_val/train_core over the 1,485 clips with extracted features, stratified by window decile, seed 1234. dev is carried over unchanged (no features, out of scope). See docs/status/label_window_audit.md and docs/status/repartition_results.md.",
+  "counts": {
+    "eval": {
+      "pos": 60,
+      "neg": 60
+    },
+    "train_val": {
+      "pos": 103,
+      "neg": 102
+    },
+    "dev": {
+      "pos": 5,
+      "neg": 10
+    }
+  },
+  "clips": {
+    "7": {
+      "split": "train_val",
+      "label": 1
+    },
+    "10": {
+      "split": "train_val",
+      "label": 1
+    },
+    "14": {
+      "split": "train_val",
+      "label": 1
+    },
+    "16": {
+      "split": "train_val",
+      "label": 1
+    },
+    "18": {
+      "split": "eval",
+      "label": 1
+    },
+    "32": {
+      "split": "train_val",
+      "label": 1
+    },
+    "36": {
+      "split": "train_val",
+      "label": 1
+    },
+    "37": {
+      "split": "train_val",
+      "label": 1
+    },
+    "46": {
+      "split": "train_val",
+      "label": 1
+    },
+    "47": {
+      "split": "eval",
+      "label": 1
+    },
+    "56": {
+      "split": "train_val",
+      "label": 1
+    },
+    "58": {
+      "split": "train_val",
+      "label": 1
+    },
+    "59": {
+      "split": "eval",
+      "label": 1
+    },
+    "62": {
+      "split": "train_val",
+      "label": 1
+    },
+    "81": {
+      "split": "train_val",
+      "label": 1
+    },
+    "83": {
+      "split": "train_val",
+      "label": 1
+    },
+    "85": {
+      "split": "eval",
+      "label": 1
+    },
+    "89": {
+      "split": "eval",
+      "label": 1
+    },
+    "98": {
+      "split": "train_val",
+      "label": 1
+    },
+    "99": {
+      "split": "eval",
+      "label": 1
+    },
+    "103": {
+      "split": "train_val",
+      "label": 1
+    },
+    "104": {
+      "split": "train_val",
+      "label": 1
+    },
+    "112": {
+      "split": "eval",
+      "label": 1
+    },
+    "125": {
+      "split": "train_val",
+      "label": 1
+    },
+    "128": {
+      "split": "eval",
+      "label": 1
+    },
+    "132": {
+      "split": "train_val",
+      "label": 1
+    },
+    "143": {
+      "split": "train_val",
+      "label": 1
+    },
+    "154": {
+      "split": "eval",
+      "label": 1
+    },
+    "155": {
+      "split": "train_val",
+      "label": 1
+    },
+    "168": {
+      "split": "train_val",
+      "label": 1
+    },
+    "171": {
+      "split": "dev",
+      "label": 1
+    },
+    "183": {
+      "split": "eval",
+      "label": 1
+    },
+    "206": {
+      "split": "train_val",
+      "label": 1
+    },
+    "208": {
+      "split": "train_val",
+      "label": 1
+    },
+    "210": {
+      "split": "train_val",
+      "label": 1
+    },
+    "228": {
+      "split": "train_val",
+      "label": 1
+    },
+    "234": {
+      "split": "dev",
+      "label": 1
+    },
+    "240": {
+      "split": "train_val",
+      "label": 1
+    },
+    "250": {
+      "split": "eval",
+      "label": 1
+    },
+    "253": {
+      "split": "train_val",
+      "label": 1
+    },
+    "256": {
+      "split": "train_val",
+      "label": 1
+    },
+    "259": {
+      "split": "train_val",
+      "label": 1
+    },
+    "271": {
+      "split": "train_val",
+      "label": 1
+    },
+    "285": {
+      "split": "train_val",
+      "label": 1
+    },
+    "286": {
+      "split": "eval",
+      "label": 1
+    },
+    "292": {
+      "split": "train_val",
+      "label": 1
+    },
+    "300": {
+      "split": "train_val",
+      "label": 1
+    },
+    "302": {
+      "split": "train_val",
+      "label": 1
+    },
+    "309": {
+      "split": "eval",
+      "label": 1
+    },
+    "313": {
+      "split": "train_val",
+      "label": 1
+    },
+    "321": {
+      "split": "eval",
+      "label": 1
+    },
+    "325": {
+      "split": "train_val",
+      "label": 1
+    },
+    "331": {
+      "split": "eval",
+      "label": 1
+    },
+    "333": {
+      "split": "eval",
+      "label": 1
+    },
+    "335": {
+      "split": "train_val",
+      "label": 1
+    },
+    "342": {
+      "split": "train_val",
+      "label": 1
+    },
+    "344": {
+      "split": "eval",
+      "label": 1
+    },
+    "356": {
+      "split": "eval",
+      "label": 1
+    },
+    "358": {
+      "split": "train_val",
+      "label": 1
+    },
+    "361": {
+      "split": "train_val",
+      "label": 1
+    },
+    "363": {
+      "split": "train_val",
+      "label": 1
+    },
+    "381": {
+      "split": "train_val",
+      "label": 1
+    },
+    "383": {
+      "split": "train_val",
+      "label": 1
+    },
+    "392": {
+      "split": "eval",
+      "label": 1
+    },
+    "394": {
+      "split": "train_val",
+      "label": 1
+    },
+    "395": {
+      "split": "train_val",
+      "label": 1
+    },
+    "426": {
+      "split": "train_val",
+      "label": 1
+    },
+    "440": {
+      "split": "train_val",
+      "label": 1
+    },
+    "444": {
+      "split": "train_val",
+      "label": 1
+    },
+    "447": {
+      "split": "eval",
+      "label": 1
+    },
+    "456": {
+      "split": "train_val",
+      "label": 1
+    },
+    "458": {
+      "split": "train_val",
+      "label": 1
+    },
+    "460": {
+      "split": "eval",
+      "label": 1
+    },
+    "464": {
+      "split": "eval",
+      "label": 1
+    },
+    "474": {
+      "split": "train_val",
+      "label": 1
+    },
+    "485": {
+      "split": "eval",
+      "label": 1
+    },
+    "510": {
+      "split": "eval",
+      "label": 1
+    },
+    "512": {
+      "split": "eval",
+      "label": 1
+    },
+    "519": {
+      "split": "train_val",
+      "label": 1
+    },
+    "534": {
+      "split": "train_val",
+      "label": 1
+    },
+    "537": {
+      "split": "train_val",
+      "label": 1
+    },
+    "544": {
+      "split": "train_val",
+      "label": 1
+    },
+    "546": {
+      "split": "eval",
+      "label": 1
+    },
+    "560": {
+      "split": "eval",
+      "label": 1
+    },
+    "564": {
+      "split": "train_val",
+      "label": 1
+    },
+    "583": {
+      "split": "train_val",
+      "label": 1
+    },
+    "586": {
+      "split": "eval",
+      "label": 1
+    },
+    "587": {
+      "split": "train_val",
+      "label": 1
+    },
+    "589": {
+      "split": "eval",
+      "label": 1
+    },
+    "590": {
+      "split": "train_val",
+      "label": 1
+    },
+    "591": {
+      "split": "eval",
+      "label": 1
+    },
+    "593": {
+      "split": "train_val",
+      "label": 1
+    },
+    "596": {
+      "split": "eval",
+      "label": 1
+    },
+    "602": {
+      "split": "train_val",
+      "label": 1
+    },
+    "603": {
+      "split": "eval",
+      "label": 1
+    },
+    "609": {
+      "split": "eval",
+      "label": 1
+    },
+    "610": {
+      "split": "train_val",
+      "label": 1
+    },
+    "621": {
+      "split": "train_val",
+      "label": 1
+    },
+    "622": {
+      "split": "eval",
+      "label": 1
+    },
+    "627": {
+      "split": "train_val",
+      "label": 1
+    },
+    "630": {
+      "split": "train_val",
+      "label": 1
+    },
+    "635": {
+      "split": "train_val",
+      "label": 1
+    },
+    "638": {
+      "split": "train_val",
+      "label": 1
+    },
+    "639": {
+      "split": "eval",
+      "label": 1
+    },
+    "641": {
+      "split": "dev",
+      "label": 1
+    },
+    "642": {
+      "split": "eval",
+      "label": 1
+    },
+    "644": {
+      "split": "train_val",
+      "label": 1
+    },
+    "647": {
+      "split": "train_val",
+      "label": 1
+    },
+    "651": {
+      "split": "train_val",
+      "label": 1
+    },
+    "664": {
+      "split": "eval",
+      "label": 1
+    },
+    "666": {
+      "split": "train_val",
+      "label": 1
+    },
+    "674": {
+      "split": "train_val",
+      "label": 1
+    },
+    "678": {
+      "split": "eval",
+      "label": 1
+    },
+    "699": {
+      "split": "eval",
+      "label": 1
+    },
+    "704": {
+      "split": "train_val",
+      "label": 1
+    },
+    "707": {
+      "split": "eval",
+      "label": 1
+    },
+    "712": {
+      "split": "train_val",
+      "label": 1
+    },
+    "722": {
+      "split": "eval",
+      "label": 1
+    },
+    "734": {
+      "split": "eval",
+      "label": 1
+    },
+    "735": {
+      "split": "eval",
+      "label": 1
+    },
+    "737": {
+      "split": "train_val",
+      "label": 1
+    },
+    "748": {
+      "split": "train_val",
+      "label": 1
+    },
+    "761": {
+      "split": "train_val",
+      "label": 1
+    },
+    "769": {
+      "split": "eval",
+      "label": 1
+    },
+    "782": {
+      "split": "train_val",
+      "label": 1
+    },
+    "785": {
+      "split": "eval",
+      "label": 1
+    },
+    "787": {
+      "split": "eval",
+      "label": 1
+    },
+    "789": {
+      "split": "train_val",
+      "label": 1
+    },
+    "794": {
+      "split": "train_val",
+      "label": 1
+    },
+    "809": {
+      "split": "train_val",
+      "label": 1
+    },
+    "822": {
+      "split": "eval",
+      "label": 1
+    },
+    "831": {
+      "split": "train_val",
+      "label": 1
+    },
+    "838": {
+      "split": "dev",
+      "label": 1
+    },
+    "843": {
+      "split": "train_val",
+      "label": 1
+    },
+    "846": {
+      "split": "train_val",
+      "label": 1
+    },
+    "860": {
+      "split": "eval",
+      "label": 1
+    },
+    "864": {
+      "split": "train_val",
+      "label": 1
+    },
+    "873": {
+      "split": "eval",
+      "label": 1
+    },
+    "879": {
+      "split": "train_val",
+      "label": 1
+    },
+    "888": {
+      "split": "train_val",
+      "label": 1
+    },
+    "889": {
+      "split": "train_val",
+      "label": 1
+    },
+    "895": {
+      "split": "train_val",
+      "label": 1
+    },
+    "896": {
+      "split": "eval",
+      "label": 1
+    },
+    "902": {
+      "split": "train_val",
+      "label": 1
+    },
+    "909": {
+      "split": "train_val",
+      "label": 1
+    },
+    "923": {
+      "split": "train_val",
+      "label": 1
+    },
+    "928": {
+      "split": "eval",
+      "label": 1
+    },
+    "930": {
+      "split": "train_val",
+      "label": 1
+    },
+    "932": {
+      "split": "train_val",
+      "label": 1
+    },
+    "935": {
+      "split": "eval",
+      "label": 1
+    },
+    "938": {
+      "split": "eval",
+      "label": 1
+    },
+    "948": {
+      "split": "train_val",
+      "label": 1
+    },
+    "958": {
+      "split": "eval",
+      "label": 1
+    },
+    "959": {
+      "split": "eval",
+      "label": 1
+    },
+    "967": {
+      "split": "train_val",
+      "label": 1
+    },
+    "968": {
+      "split": "train_val",
+      "label": 1
+    },
+    "973": {
+      "split": "dev",
+      "label": 1
+    },
+    "976": {
+      "split": "train_val",
+      "label": 1
+    },
+    "985": {
+      "split": "eval",
+      "label": 1
+    },
+    "989": {
+      "split": "eval",
+      "label": 1
+    },
+    "995": {
+      "split": "train_val",
+      "label": 1
+    },
+    "996": {
+      "split": "train_val",
+      "label": 1
+    },
+    "998": {
+      "split": "train_val",
+      "label": 1
+    },
+    "1002": {
+      "split": "eval",
+      "label": 1
+    },
+    "1011": {
+      "split": "train_val",
+      "label": 1
+    },
+    "1013": {
+      "split": "train_val",
+      "label": 1
+    },
+    "1024": {
+      "split": "eval",
+      "label": 1
+    },
+    "1036": {
+      "split": "eval",
+      "label": 1
+    },
+    "1041": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1042": {
+      "split": "eval",
+      "label": 0
+    },
+    "1046": {
+      "split": "eval",
+      "label": 0
+    },
+    "1060": {
+      "split": "eval",
+      "label": 0
+    },
+    "1092": {
+      "split": "eval",
+      "label": 0
+    },
+    "1098": {
+      "split": "eval",
+      "label": 0
+    },
+    "1108": {
+      "split": "eval",
+      "label": 0
+    },
+    "1109": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1118": {
+      "split": "dev",
+      "label": 0
+    },
+    "1122": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1131": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1136": {
+      "split": "eval",
+      "label": 0
+    },
+    "1141": {
+      "split": "eval",
+      "label": 0
+    },
+    "1156": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1167": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1171": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1176": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1189": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1191": {
+      "split": "eval",
+      "label": 0
+    },
+    "1196": {
+      "split": "eval",
+      "label": 0
+    },
+    "1206": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1213": {
+      "split": "dev",
+      "label": 0
+    },
+    "1217": {
+      "split": "dev",
+      "label": 0
+    },
+    "1225": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1230": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1238": {
+      "split": "eval",
+      "label": 0
+    },
+    "1248": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1255": {
+      "split": "eval",
+      "label": 0
+    },
+    "1267": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1271": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1272": {
+      "split": "eval",
+      "label": 0
+    },
+    "1277": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1282": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1286": {
+      "split": "eval",
+      "label": 0
+    },
+    "1288": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1290": {
+      "split": "eval",
+      "label": 0
+    },
+    "1292": {
+      "split": "eval",
+      "label": 0
+    },
+    "1294": {
+      "split": "eval",
+      "label": 0
+    },
+    "1295": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1309": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1313": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1315": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1317": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1318": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1320": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1332": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1368": {
+      "split": "eval",
+      "label": 0
+    },
+    "1372": {
+      "split": "dev",
+      "label": 0
+    },
+    "1377": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1383": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1384": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1393": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1399": {
+      "split": "eval",
+      "label": 0
+    },
+    "1405": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1411": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1426": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1435": {
+      "split": "eval",
+      "label": 0
+    },
+    "1448": {
+      "split": "eval",
+      "label": 0
+    },
+    "1465": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1466": {
+      "split": "eval",
+      "label": 0
+    },
+    "1476": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1484": {
+      "split": "eval",
+      "label": 0
+    },
+    "1488": {
+      "split": "eval",
+      "label": 0
+    },
+    "1489": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1490": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1493": {
+      "split": "eval",
+      "label": 0
+    },
+    "1498": {
+      "split": "eval",
+      "label": 0
+    },
+    "1508": {
+      "split": "eval",
+      "label": 0
+    },
+    "1519": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1526": {
+      "split": "eval",
+      "label": 0
+    },
+    "1538": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1543": {
+      "split": "eval",
+      "label": 0
+    },
+    "1544": {
+      "split": "eval",
+      "label": 0
+    },
+    "1551": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1559": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1564": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1570": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1578": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1579": {
+      "split": "eval",
+      "label": 0
+    },
+    "1581": {
+      "split": "eval",
+      "label": 0
+    },
+    "1583": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1585": {
+      "split": "eval",
+      "label": 0
+    },
+    "1586": {
+      "split": "eval",
+      "label": 0
+    },
+    "1592": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1597": {
+      "split": "eval",
+      "label": 0
+    },
+    "1599": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1607": {
+      "split": "eval",
+      "label": 0
+    },
+    "1608": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1612": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1616": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1625": {
+      "split": "eval",
+      "label": 0
+    },
+    "1634": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1635": {
+      "split": "dev",
+      "label": 0
+    },
+    "1649": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1652": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1657": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1660": {
+      "split": "eval",
+      "label": 0
+    },
+    "1662": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1666": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1679": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1680": {
+      "split": "eval",
+      "label": 0
+    },
+    "1714": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1719": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1720": {
+      "split": "eval",
+      "label": 0
+    },
+    "1722": {
+      "split": "dev",
+      "label": 0
+    },
+    "1728": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1733": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1734": {
+      "split": "eval",
+      "label": 0
+    },
+    "1737": {
+      "split": "eval",
+      "label": 0
+    },
+    "1740": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1750": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1753": {
+      "split": "eval",
+      "label": 0
+    },
+    "1760": {
+      "split": "eval",
+      "label": 0
+    },
+    "1761": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1765": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1767": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1772": {
+      "split": "eval",
+      "label": 0
+    },
+    "1779": {
+      "split": "eval",
+      "label": 0
+    },
+    "1780": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1785": {
+      "split": "eval",
+      "label": 0
+    },
+    "1801": {
+      "split": "dev",
+      "label": 0
+    },
+    "1802": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1810": {
+      "split": "eval",
+      "label": 0
+    },
+    "1817": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1834": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1835": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1839": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1845": {
+      "split": "eval",
+      "label": 0
+    },
+    "1860": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1864": {
+      "split": "eval",
+      "label": 0
+    },
+    "1866": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1872": {
+      "split": "eval",
+      "label": 0
+    },
+    "1874": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1878": {
+      "split": "eval",
+      "label": 0
+    },
+    "1880": {
+      "split": "eval",
+      "label": 0
+    },
+    "1901": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1903": {
+      "split": "eval",
+      "label": 0
+    },
+    "1904": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1906": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1913": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1928": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1934": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1939": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1944": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1961": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1964": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1970": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1976": {
+      "split": "train_val",
+      "label": 0
+    },
+    "1995": {
+      "split": "eval",
+      "label": 0
+    },
+    "2000": {
+      "split": "train_val",
+      "label": 0
+    },
+    "2003": {
+      "split": "eval",
+      "label": 0
+    },
+    "2019": {
+      "split": "dev",
+      "label": 0
+    },
+    "2033": {
+      "split": "train_val",
+      "label": 0
+    },
+    "2037": {
+      "split": "dev",
+      "label": 0
+    },
+    "2041": {
+      "split": "eval",
+      "label": 0
+    },
+    "2045": {
+      "split": "train_val",
+      "label": 0
+    },
+    "2046": {
+      "split": "train_val",
+      "label": 0
+    },
+    "2053": {
+      "split": "train_val",
+      "label": 0
+    },
+    "2062": {
+      "split": "dev",
+      "label": 0
+    },
+    "2067": {
+      "split": "train_val",
+      "label": 0
+    },
+    "2070": {
+      "split": "train_val",
+      "label": 0
+    },
+    "2072": {
+      "split": "eval",
+      "label": 0
+    },
+    "2074": {
+      "split": "train_val",
+      "label": 0
+    },
+    "2088": {
+      "split": "train_val",
+      "label": 0
+    },
+    "2089": {
+      "split": "train_val",
+      "label": 0
+    },
+    "2111": {
+      "split": "eval",
+      "label": 0
+    },
+    "2118": {
+      "split": "train_val",
+      "label": 0
+    },
+    "2121": {
+      "split": "train_val",
+      "label": 0
+    },
+    "2124": {
+      "split": "train_val",
+      "label": 0
+    },
+    "2128": {
+      "split": "train_val",
+      "label": 0
+    },
+    "2136": {
+      "split": "train_val",
+      "label": 0
+    },
+    "2139": {
+      "split": "eval",
+      "label": 0
+    }
+  }
+}

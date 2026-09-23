@@ -113,7 +113,7 @@ def guard_held_out(feature_dir, role, freeze_path, allowed, override_flag):
         f"frozen as '{HELD_OUT_SPLIT}' in {freeze_path} (e.g. {hits[:5]}).\n"
         "Selecting anything against the held-out split -- best epoch, early "
         "stopping, threshold, kappa -- makes the final number a selection "
-        "result, not a held-out one. Point this at data/features/train_val "
+        "result, not a held-out one. Point this at data/features/train_val_v2 "
         f"instead.\nIf the checkpoint and operating point are already fixed and "
         f"this is the single final read, pass {override_flag}.")
 

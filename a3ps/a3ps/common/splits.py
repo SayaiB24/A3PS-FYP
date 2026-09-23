@@ -44,7 +44,27 @@ FROZEN_SPLITS = ("dev", "eval", "train_val")
 # and this module agree on what "the test set" means.
 HELD_OUT_SPLIT = "eval"
 
-DEFAULT_FREEZE_PATH = os.path.join("eval", "split_freeze.json")
+# v1 froze dev/eval from ``labels.xlsx``, a hand-built 355-row subset whose
+# positives were sorted by alert-to-event window descending and cut at the 65
+# longest clips in the dataset. dev/eval therefore absorbed every clip with a
+# window over 2.97 s and training got nothing above it -- the held-out split was
+# the most anticipatable slice of the data by construction. See
+# ``docs/status/label_window_audit.md``. v2 redraws all three splits stratified
+# by window decile over the 1,485 clips that have extracted features.
+#
+# v1 is kept on disk as the record of what old numbers were measured against,
+# but it is NOT consulted by the guard. Once v2 redistributed v1's eval clips
+# (97 of 120 are now train_core), v1 membership stopped meaning "held out" --
+# treating it as held-out would refuse legitimate training data.
+#
+# Guarding on v2 alone is also what protects the stale directories, because
+# membership catches them: data/features/train_all holds 108 clips that v2
+# freezes as eval, and data/features/eval holds 12, so pointing at either is
+# refused on its own merits rather than by remembering which one is retired.
+LEGACY_FREEZE_PATH = os.path.join("eval", "split_freeze.json")
+FREEZE_PATH_V2 = os.path.join("eval", "split_freeze_v2.json")
+
+DEFAULT_FREEZE_PATH = FREEZE_PATH_V2
 
 SCHEMA_VERSION = 1
 
