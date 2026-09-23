@@ -45,7 +45,7 @@ import torch  # noqa: E402
 
 from a3ps.common.schema import Event  # noqa: E402
 from a3ps.explain.templates import explain as template_explain  # noqa: E402
-from a3ps.risk.anticipation_loss import first_alert_time  # noqa: E402
+from a3ps.risk.anticipation_loss import find_alert_episodes, first_alert_time  # noqa: E402
 from a3ps.risk.temporal import RiskGRU  # noqa: E402
 
 # The committed operating point, from the kappa sweep (eval/kappa_comparison.md
@@ -426,6 +426,30 @@ def build_clip(cid, row, model, args):
             return "too early"
         return "useful"
 
+    def verdict_v2_and_coverage():
+        """The corrected (episode-based) definition, alongside the legacy one.
+
+        docs/design/useful_warning_definition.md: a clip is useful if ANY
+        confirmed alert episode's active interval [confirm_t, end_t]
+        intersects [alert_t, event_t] -- not only the clip's first crossing.
+        This is what fixed clip 1013 (docs/status/early_firing_diagnosis.md):
+        a continuous elevated run starting before alert_t and lasting through
+        event_t scored "too early" under the legacy rule above, identical to
+        never warning at all, despite covering the whole actionable window.
+
+        Returns (verdict_v2, window_covered): window_covered is the same
+        boolean the verdict is derived from, exposed separately because the
+        task asked for it explicitly alongside the verdict string.
+        """
+        if label == 0:
+            return ("false_alarm" if fa is not None else "clean"), None
+        if alert_t is None or event_t is None:
+            return "untimed", None
+        episodes = find_alert_episodes(probs, t, args.threshold, args.confirm)
+        covered = any(e["confirm_t"] <= event_t and e["end_t"] >= alert_t
+                     for e in episodes)
+        return ("useful" if covered else "missed"), covered
+
     def old_verdict():
         ts = [e["t"] for e in old_events]
         if label == 0:
@@ -438,6 +462,8 @@ def build_clip(cid, row, model, args):
         if alert_t is not None and first < alert_t:
             return "too early"
         return "useful"
+
+    v2_verdict, v2_covered = verdict_v2_and_coverage()
 
     out = {
         "clip_id": cid,
@@ -457,6 +483,8 @@ def build_clip(cid, row, model, args):
             "event": learned_event,
             "brake_event": learned_brake,
             "verdict": verdict(),
+            "verdict_v2": v2_verdict,
+            "window_covered_v2": v2_covered,
             "checkpoint": os.path.basename(args.checkpoint),
         },
         "threshold_system": {
@@ -582,7 +610,8 @@ def main():
 
         lr, th = data["learned"], data["threshold_system"]
         print(f"  {cid} ({'pos' if data['label'] else 'neg'}): "
-              f"learned {lr['verdict']:11s} "
+              f"learned[legacy] {lr['verdict']:11s} "
+              f"learned[v2] {lr['verdict_v2']:9s} "
               f"@{(lr['event'] or {}).get('t', float('nan')):>6} s  |  "
               f"old {th['verdict']:11s} @{th['first_alert_t']} s "
               f"({th['n_events']} events)"

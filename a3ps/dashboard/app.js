@@ -570,6 +570,13 @@ function updateBanner() {
 const VERDICT_CLASS = {
   useful: "good", clean: "good",
   "too early": "bad", "false alarm": "bad", miss: "bad", "too late": "bad",
+  // v2 (episode-based) verdicts -- see docs/design/useful_warning_definition.md.
+  // "missed" (not "miss") and "false_alarm" (underscore) are the v2
+  // vocabulary as build_dashboard_demo.py / train_risk_head.py emit it;
+  // kept distinct from the legacy strings above rather than aliased, so a
+  // stray legacy-vs-v2 string mismatch fails loudly (shows unstyled) instead
+  // of silently reusing the wrong colour.
+  missed: "bad", false_alarm: "bad", untimed: "",
 };
 
 function renderCompare() {
@@ -625,9 +632,22 @@ function renderCompare() {
                op.brake_threshold != null ? op.brake_threshold : 0.8}</div></div>`
         : "");
 
+  // v2 (episode-based) verdict, shown alongside the legacy one rather than
+  // replacing it -- every other report in this project now presents both
+  // definitions side by side (docs/design/useful_warning_definition.md),
+  // and this panel should not be the one place that still only shows the
+  // legacy first-crossing rule. v2 has no single "when" the way legacy does
+  // (it asks whether ANY episode covers the window, not when the first one
+  // fired), so the when-slot shows coverage in words instead of a timestamp.
+  const v2Row = L.verdict_v2
+    ? row("↳ v2 (episode-based)", L.verdict_v2,
+          L.window_covered_v2 ? "window covered" : "window not covered", "")
+    : "";
+
   els.compareRows.innerHTML =
     row("Learned head (GRU)", L.verdict || "—",
         fmt(L.event ? L.event.t : null), lead(L.event ? L.event.t : null)) +
+    v2Row +
     brakeRow +
     row("Threshold system", T.verdict || "—",
         fmt(T.first_alert_t),

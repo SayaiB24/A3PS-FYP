@@ -214,8 +214,98 @@ and identical operating point, differing only by training seed. **Step 11's
 single eval read at this configuration should be read against that spread,
 not against 0.612 as if it were a stable number.**
 
-## 4. Dashboard rebuild and sanity check
+## 4. Dashboard rebuild
 
-See below. Per instruction, the seed-1234 checkpoint is used regardless of
-what the multi-seed check shows, since it is already trained and available
-and is the configuration explicitly authorized to proceed.
+Per instruction, the seed-1234 checkpoint is used regardless of what the
+multi-seed check shows, since it is already trained and available and is the
+configuration explicitly authorized to proceed. Rebuilt with
+`scripts/build_dashboard_demo.py --checkpoint
+notebooks/models/risk_gru_k1p0_v2_selfix_s1234.pt --threshold 0.70 --confirm
+8`, against the demo clip pool already used before: `--clips auto --n 6`
+(picked 621, 488, 1004, 690, 1042, 1054) and the six named clips
+(621, 488, 1004, 690, 1085, 1261, all present with local video). Both runs
+completed with no errors; `scripts/update_manifest.py --require-video`
+rebuilt the dropdown afterward.
+
+**`build_dashboard_demo.py` and the dashboard's MODEL COMPARISON panel now
+show both verdict definitions.** Previously the panel (`dashboard/app.js`'s
+`renderCompare()`) rendered only the legacy learned-head verdict. Added:
+a `verdict_v2` (and `window_covered_v2` boolean) field to each clip's
+`risk.json`, computed with `find_alert_episodes()` exactly as
+`train_risk_head.py`'s `evaluate()` does — a clip is `useful` under v2 if any
+confirmed episode's active interval intersects `[alert_t, event_t]`, not
+only the first crossing. The comparison panel gained a `↳ v2 (episode-based)`
+row underneath the legacy verdict, and the console summary prints
+`learned[legacy]` and `learned[v2]` side by side. The v2 row has no single
+fire time to show (the definition asks whether the window is covered at all,
+not when the first episode began), so its "when" column shows "window
+covered" / "window not covered" in words rather than a timestamp.
+
+### ⚠️ This demo pool overlaps the seed-1234 model's own training set
+
+**Checked before writing the table below, because this project has caught
+exactly this kind of leakage repeatedly.** The demo pool (`--features
+data/features/eval`, the default) is the **v1** eval-split directory — a
+different directory from `data/features/eval_v2`, so the hard rule ("do not
+read `data/features/eval_v2`") is not violated. But by **clip identity**,
+checked against `eval/split_freeze_v2.json`:
+
+| clip | v2 membership |
+|---|---|
+| 621 | `train_val_v2` (validation only — not trained on) |
+| 488, 1004, 690, 1085, 1261, 1054 | **`train_core_v2` — the model was TRAINED on these** |
+| 1042 | `eval_v2` (the current held-out split, by identity — see below) |
+
+**Six of the eight demo clips are inside seed 1234's own training set.**
+Their `useful`/`clean` verdicts in the table below reflect the model having
+seen these exact clips during training, not generalisation. This is exactly
+why the task frames this set as illustrative rather than evidentiary, and it
+is stated here as plainly as possible: **do not read anything in Section 4 as
+evidence of model quality.**
+
+Clip 1042 is a separate, smaller note: it is classified `eval_v2` by identity
+in the current freeze, even though its features here were read from the v1
+`data/features/eval/` directory, not `data/features/eval_v2/` — the hard
+rule's literal subject. No file named `eval_v2` was opened. Flagged anyway,
+because a technically-compliant read of a held-out clip's identity through a
+side door is exactly the kind of thing worth surfacing rather than leaving
+implicit.
+
+### Demo-clip table (illustrative only — see the warning above)
+
+| clip | label | v2 split membership | legacy verdict | v2 verdict | window covered (v2) | fire time | lead (event − fire) |
+|---|---|---|---|---|---|---|---|
+| 621 | pos | train_val_v2 | useful | useful | True | 22.80 s | 2.90 s |
+| 488 | pos | **train_core_v2 (trained on)** | useful | useful | True | 20.43 s | 3.17 s |
+| 1004 | pos | **train_core_v2 (trained on)** | useful | useful | True | 21.03 s | 0.77 s |
+| 690 | pos | **train_core_v2 (trained on)** | useful | useful | True | 19.03 s | 2.10 s |
+| 1085 | neg | **train_core_v2 (trained on)** | clean | clean | — | — | — |
+| 1261 | neg | **train_core_v2 (trained on)** | clean | clean | — | — | — |
+| 1042 | neg | eval_v2 (by identity; read via v1 dir) | clean | clean | — | — | — |
+| 1054 | neg | **train_core_v2 (trained on)** | false alarm | false_alarm | — | — | — |
+
+Legacy and v2 agree on every demo clip shown — none of them happen to
+illustrate the clip-1013-style disagreement this whole metric fix was built
+around, which is itself a reminder that a demo set this small (and this
+overlapped with training) is not where that distinction would reliably show
+up. `early_firing_diagnosis.md` and `metric_fix_results.md` remain the actual
+evidence for the legacy/v2 gap, not this table.
+
+## 5. Sanity check before the eval read
+
+1. **Checkpoint exists and loads:**
+   `notebooks/models/risk_gru_k1p0_v2_selfix_s1234.pt` — confirmed, loaded
+   successfully by both the sweep in Section 1/3 and the dashboard build
+   above (`RiskGRU.load()` printed `best epoch 4, trained kappa=1.0
+   pre_alert_weight=0.5` with no error).
+2. **Operating point fully specified:** threshold **0.70**, confirm **8**.
+3. **Dashboard runs end-to-end with no errors:** both builds (`--clips auto
+   --n 6` and the six named clips) completed with zero skipped clips and zero
+   exceptions; `update_manifest.py --require-video` rebuilt the dropdown
+   afterward with no error. Served locally (`scripts/serve_dashboard.py`) and
+   verified directly: `index.html`, `app.js`, `clips/manifest.json`, and
+   clip 621's `risk.json` / `events.json` / `raw.mp4` all returned HTTP 200,
+   and `risk.json` parses as valid JSON containing the new `verdict_v2` /
+   `window_covered_v2` fields.
+
+`data/features/eval_v2` has not been read at any point in this task.
