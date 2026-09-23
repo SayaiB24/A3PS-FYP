@@ -521,3 +521,113 @@ def test_v2_does_not_credit_an_alert_entirely_after_the_event():
     assert row["premature"] is False
     assert v["n_useful"] == 0
     assert v["n_useful_v2"] == 0
+
+
+# ---------------------------------------------------------------------------
+# clips 544 and 1013 -- permanent regressions for the v2-is-a-superset-of-
+# legacy guarantee. Both were real failures found on real checkpoints:
+# clip 544 was the case that exposed the debounce-end-vs-run-start bug
+# (v2 scored BELOW legacy before the fix); clip 1013 is the original
+# clip-1013 case documented in early_firing_diagnosis.md that motivated the
+# whole corrected definition. Neither must ever regress silently.
+# ---------------------------------------------------------------------------
+
+def _load_real_checkpoint_and_clip(seed_ckpt, clip_id):
+    import os
+    import train_risk_head as trh
+    from a3ps.risk.temporal import RiskGRU
+
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    ckpt = os.path.join(root, "notebooks", "models", seed_ckpt)
+    feats = os.path.join(root, "data", "features", "train_val_v2")
+    if not (os.path.isfile(ckpt) and os.path.isdir(feats)):
+        pytest.skip("checkpoint or train_val_v2 features not present")
+    model, extra = RiskGRU.load(ckpt)
+    clips = trh.load_clips(feats)
+    by_id = {c["clip_id"]: c for c in clips}
+    if clip_id not in by_id:
+        pytest.skip(f"clip {clip_id} not present in train_val_v2")
+    return model, by_id[clip_id]
+
+
+def test_clip_544_v2_is_not_below_legacy():
+    """Regression for the debounce-end-vs-run-start bug.
+
+    Before the fix, find_alert_episodes() credited an episode at the frame its
+    confirm-length debounce COMPLETED rather than the run's own first frame.
+    On this exact clip (seed 1236, thr 0.80/confirm 8) that pushed the
+    confirmation timestamp from 20.803s (inside [alert_t=20.354, event_t=
+    21.455], legacy verdict useful) to 21.505s (just past event_t), so v2
+    scored the clip missed while legacy scored it useful -- v2 BELOW legacy,
+    exactly the regression this test exists to catch if it ever reappears.
+    """
+    import train_risk_head as trh
+
+    model, clip = _load_real_checkpoint_and_clip(
+        "risk_gru_k1p0_v2_s1236.pt", "544")
+    v = trh.evaluate(model, [clip], 0.80, confirm=8, dump_rows=True)
+    row = v["rows"][0]
+
+    assert row["verdict"] == "useful"
+    assert row["verdict_v2"] == "useful"     # must NOT be "missed"
+    assert v["n_useful_v2"] >= v["n_useful"]
+
+
+def test_clip_1013_v2_credits_the_sustained_window_coverage():
+    """Regression for the case that motivated the corrected definition.
+
+    Clip 1013 (seed 1234, thr 0.60/confirm 5): one continuous elevated run
+    starting well before alert_t=18.833 and lasting through event_t=19.300,
+    so legacy's first-crossing rule scores it too_early -- identical to never
+    warning at all -- while v2 must credit the sustained window coverage as
+    useful. See docs/status/early_firing_diagnosis.md section 3 and
+    docs/design/useful_warning_definition.md section 1.
+    """
+    import train_risk_head as trh
+
+    model, clip = _load_real_checkpoint_and_clip(
+        "risk_gru_k1p0_v2_s1234.pt", "1013")
+    v = trh.evaluate(model, [clip], 0.60, confirm=5, dump_rows=True)
+    row = v["rows"][0]
+
+    assert row["verdict"] == "too_early"     # legacy: penalised for firing early
+    assert row["verdict_v2"] == "useful"     # v2: window coverage credited
+    assert row["premature"] is True
+    assert v["n_useful"] == 0
+    assert v["n_useful_v2"] == 1
+
+
+def test_v2_useful_set_is_a_superset_of_legacy_across_the_full_grid():
+    """The property itself, checked directly rather than inferred from two
+    clips: for every (threshold, confirm) cell and every v2 checkpoint,
+    n_useful_v2 must never fall below n_useful. This is what actually failed
+    (6 of 45 cells) before the run-start fix; this test is the permanent
+    guard against that regression reappearing under a future change to
+    find_alert_episodes() or evaluate()."""
+    import os
+    import train_risk_head as trh
+    from a3ps.risk.temporal import RiskGRU
+
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    feats = os.path.join(root, "data", "features", "train_val_v2")
+    if not os.path.isdir(feats):
+        pytest.skip("train_val_v2 features not present")
+    clips = trh.load_clips(feats)
+
+    checkpoints = [f"risk_gru_k1p0_v2_s{s}.pt" for s in (1234, 1235, 1236)]
+    checkpoints = [c for c in checkpoints
+                  if os.path.isfile(os.path.join(root, "notebooks", "models", c))]
+    if not checkpoints:
+        pytest.skip("no v2 checkpoints present")
+
+    violations = []
+    for ckpt_name in checkpoints:
+        model, extra = RiskGRU.load(os.path.join(root, "notebooks", "models", ckpt_name))
+        for confirm in (3, 5, 8):
+            for threshold in (0.5, 0.6, 0.7, 0.8, 0.9):
+                v = trh.evaluate(model, clips, threshold, confirm=confirm)
+                if v["n_useful_v2"] < v["n_useful"]:
+                    violations.append((ckpt_name, threshold, confirm,
+                                       v["n_useful"], v["n_useful_v2"]))
+
+    assert not violations, f"v2 scored below legacy on: {violations}"
