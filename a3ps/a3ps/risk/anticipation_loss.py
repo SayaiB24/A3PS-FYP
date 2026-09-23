@@ -250,6 +250,55 @@ def first_alert_time(probs: torch.Tensor,
     return None
 
 
+def find_alert_episodes(probs: torch.Tensor,
+                        t: torch.Tensor,
+                        threshold: float,
+                        confirm: int = 1) -> list:
+    """Every confirmed alert episode in one pass: maximal runs of ``>= confirm``
+    consecutive frames with ``p >= threshold``.
+
+    Sibling of :func:`first_alert_time`, which reports only the earliest such
+    run and stops. This reports all of them, because a clip whose probability
+    stays above threshold continuously through ``[alert_t, event_t]`` needs
+    that fact visible even when the run started earlier -- see
+    ``docs/design/useful_warning_definition.md``. Does not replace or alter
+    :func:`first_alert_time`.
+
+    Each episode is a dict ``{"confirm_t", "start_t", "end_t"}``:
+
+    * ``confirm_t`` -- the frame at which the run first reaches ``confirm``
+      consecutive hits. Identical to what ``first_alert_time`` would return if
+      this were the first episode in the clip.
+    * ``start_t`` / ``end_t`` -- the run's actual first/last frame. The
+      episode's *active interval* (from
+      ``docs/design/useful_warning_definition.md``) is ``[confirm_t, end_t]``,
+      not ``[start_t, end_t]``: the model is not credited with knowing
+      anything before its own debounce has confirmed.
+    """
+    if probs.ndim != 1 or probs.shape != t.shape:
+        raise ValueError("probs and t must be 1-D and equal length")
+    over = (probs >= float(threshold)).tolist()
+    need = max(1, int(confirm))
+    n = len(over)
+    episodes = []
+    i = 0
+    while i < n:
+        if not over[i]:
+            i += 1
+            continue
+        j = i
+        while j < n and over[j]:
+            j += 1
+        if j - i >= need:
+            episodes.append({
+                "confirm_t": float(t[i + need - 1]),
+                "start_t": float(t[i]),
+                "end_t": float(t[j - 1]),
+            })
+        i = j
+    return episodes
+
+
 def expected_lead_time(alert_t: float, event_t: float,
                        kappa: float = DEFAULT_KAPPA) -> float:
     """Weighted-mean warning time under :func:`alert_weights`, in s before event.

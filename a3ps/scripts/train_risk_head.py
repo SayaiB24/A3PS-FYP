@@ -33,6 +33,7 @@ import glob
 import json
 import os
 import random
+import statistics
 import sys
 import time
 
@@ -53,6 +54,7 @@ from a3ps.risk.anticipation_loss import (  # noqa: E402
     DEFAULT_PRE_ALERT_WEIGHT,
     batch_anticipation_loss,
     expected_lead_time,
+    find_alert_episodes,
     first_alert_time,
 )
 from a3ps.risk.temporal import RiskGRU, assert_causal, count_parameters  # noqa: E402
@@ -138,17 +140,54 @@ def split_by_clip(clips, val_frac, seed):
 # evaluation
 # ---------------------------------------------------------------------------
 
+GROSS_PREMATURE_SECONDS = 5.0
+GROSS_PREMATURE_CLIP_FRACTION = 0.20
+
+
 def evaluate(model, clips, threshold, cutoffs=(0.5, 1.0, 1.5), confirm=3,
             dump_rows=False):
     """Useful-warning rate, cutoff APs and lead time on a clip list.
 
-    ``dump_rows=True`` adds a ``"rows"`` key to the returned dict: one dict per
-    clip with the per-clip quantities the aggregate numbers below are computed
-    from (verdict, fire time, lead, etc). It surfaces values this function
-    already computes -- no scoring logic changes, and default callers get the
-    exact same dict they always did (no ``"rows"`` key at all), so nothing
-    downstream is affected. See ``tests/test_train_risk_head.py`` for a test
-    that the dumped rows reproduce these aggregates.
+    Every value this function returned before the corrected-definition work
+    (``n_clips``, ``n_timed``, ``useful_warning_rate``, ``n_useful``,
+    ``n_too_early``, ``false_alarm_rate``, ``mean_lead_s``, ``AP``,
+    ``mean_AP``) is computed exactly as before and is the LEGACY definition:
+    a clip is ``useful`` only if the very first sustained threshold crossing
+    lands inside ``[alert_t, event_t]``. That definition, and every key name
+    above, is preserved permanently -- see
+    ``docs/design/useful_warning_definition.md`` -- because
+    ``train()``'s epoch selection and every existing caller read these exact
+    keys, and because every previously reported number in this project was
+    measured under it.
+
+    New keys, always present (not behind a flag, per
+    ``docs/design/useful_warning_definition.md`` -- the two definitions are
+    reported side by side, always, not opt-in): the corrected,
+    episode-based definition, under which a clip is ``useful`` if ANY
+    confirmed alert episode's active interval intersects
+    ``[alert_t, event_t]``, not only the first one. ``n_useful_v2``,
+    ``useful_warning_rate_v2``, ``mean_lead_vs_event_v2``,
+    ``mean_lead_vs_alert_v2`` (means over v2-useful clips), and the
+    prematurity axis: ``frac_premature`` (of timed positives, earliest
+    confirmed episode anywhere in the clip begins before ``alert_t``),
+    ``median_premature_s`` (median seconds early, over the premature ones),
+    and ``n_gross_premature`` (earliest confirmed episode begins more than
+    ``GROSS_PREMATURE_SECONDS`` before ``alert_t``, OR within the first
+    ``GROSS_PREMATURE_CLIP_FRACTION`` of the clip's own duration -- the axis
+    that keeps the old threshold engine's frame-0 firing failure mode
+    visible regardless of which ``useful_warning_rate`` is being read).
+    ``false_alarm_rate`` needs no v2 variant: a negative is a false alarm if
+    it produces any confirmed episode at all, which is exactly what the
+    existing ``fa is not None`` test already checks.
+
+    ``dump_rows=True`` adds a ``"rows"`` key: one dict per clip carrying both
+    definitions' verdicts and every quantity the aggregates above are
+    computed from. It surfaces values this function already computes -- no
+    scoring logic changes, and non-``dump_rows`` callers get the exact same
+    dict shape they always did plus the always-present v2/prematurity keys.
+    See ``tests/test_train_risk_head.py`` for tests that (a) the legacy keys
+    reproduce pre-existing committed numbers bit for bit and (b) the dumped
+    rows reproduce every aggregate exactly.
     """
     model.eval()
     timelines, rows = [], []
@@ -156,18 +195,23 @@ def evaluate(model, clips, threshold, cutoffs=(0.5, 1.0, 1.5), confirm=3,
         for c in clips:
             probs = torch.sigmoid(model(c["X"]))
             fa = first_alert_time(probs, c["t"], threshold, confirm)
+            episodes = find_alert_episodes(probs, c["t"], threshold, confirm)
             peak_i = int(torch.argmax(probs))
-            rows.append({"clip": c, "first_alert_t": fa,
+            rows.append({"clip": c, "first_alert_t": fa, "episodes": episodes,
                          "peak": float(probs.max()),
                          "peak_t": float(c["t"][peak_i])})
             timelines.append(list(zip(c["t"].tolist(), probs.tolist())))
 
     useful = early = n_timed = 0
     leads, fa_neg = [], 0
+    n_useful_v2 = 0
+    leads_event_v2, leads_alert_v2 = [], []
+    n_premature, premature_seconds, n_gross_premature = 0, [], 0
     detail = []
     for r in rows:
         c = r["clip"]
         te, ta, fa = c["event_time_s"], c["alert_time_s"], r["first_alert_t"]
+        episodes = r["episodes"]
         window = (te - ta) if (te is not None and ta is not None) else None
 
         if c["label"] == 0:
@@ -176,14 +220,20 @@ def evaluate(model, clips, threshold, cutoffs=(0.5, 1.0, 1.5), confirm=3,
                 "clip_id": c["clip_id"], "label": 0, "alert_t": ta, "event_t": te,
                 "window_s": window, "first_fire_t": fa,
                 "verdict": "false_alarm" if fa is not None else "clean",
+                "verdict_v2": "false_alarm" if fa is not None else "clean",
                 "lead_s": None, "offset_from_alert_s": None,
+                "lead_vs_event_v2": None, "lead_vs_alert_v2": None,
+                "premature": None, "gross_premature": None,
                 "peak_prob": r["peak"], "peak_t": r["peak_t"]})
             continue
         if te is None or ta is None:
             detail.append({
                 "clip_id": c["clip_id"], "label": 1, "alert_t": ta, "event_t": te,
                 "window_s": window, "first_fire_t": fa, "verdict": "untimed",
+                "verdict_v2": "untimed",
                 "lead_s": None, "offset_from_alert_s": None,
+                "lead_vs_event_v2": None, "lead_vs_alert_v2": None,
+                "premature": None, "gross_premature": None,
                 "peak_prob": r["peak"], "peak_t": r["peak_t"]})
             continue
         n_timed += 1
@@ -199,11 +249,52 @@ def evaluate(model, clips, threshold, cutoffs=(0.5, 1.0, 1.5), confirm=3,
             useful += 1
         if verdict in ("useful", "too_early"):
             leads.append(te - fa)
+
+        # --- corrected definition: ANY episode's active interval [confirm_t,
+        # end_t] intersecting [alert_t, event_t] makes the clip useful, not
+        # only the first episode in the clip.
+        intersecting = [e for e in episodes
+                        if e["confirm_t"] <= te and e["end_t"] >= ta]
+        if intersecting:
+            earliest = min(intersecting, key=lambda e: e["confirm_t"])
+            verdict_v2 = "useful"
+            lead_event_v2 = te - earliest["confirm_t"]
+            lead_alert_v2 = earliest["confirm_t"] - ta
+            n_useful_v2 += 1
+            leads_event_v2.append(lead_event_v2)
+            leads_alert_v2.append(lead_alert_v2)
+        else:
+            verdict_v2 = "missed"
+            lead_event_v2 = lead_alert_v2 = None
+
+        # --- prematurity: earliest confirmed episode ANYWHERE in the clip
+        # (not only ones intersecting the window), regardless of verdict.
+        premature = gross_premature = False
+        if episodes:
+            earliest_overall = min(episodes, key=lambda e: e["confirm_t"])
+            if earliest_overall["confirm_t"] < ta:
+                premature = True
+                early_by = ta - earliest_overall["confirm_t"]
+                n_premature += 1
+                premature_seconds.append(early_by)
+                t0 = float(c["t"][0])
+                t1 = float(c["t"][-1])
+                dur = t1 - t0
+                frac_in = ((earliest_overall["confirm_t"] - t0) / dur
+                          if dur > 0 else 0.0)
+                if (early_by > GROSS_PREMATURE_SECONDS
+                        or frac_in < GROSS_PREMATURE_CLIP_FRACTION):
+                    gross_premature = True
+                    n_gross_premature += 1
+
         detail.append({
             "clip_id": c["clip_id"], "label": 1, "alert_t": ta, "event_t": te,
             "window_s": window, "first_fire_t": fa, "verdict": verdict,
+            "verdict_v2": verdict_v2,
             "lead_s": lead,
             "offset_from_alert_s": (fa - ta) if fa is not None else None,
+            "lead_vs_event_v2": lead_event_v2, "lead_vs_alert_v2": lead_alert_v2,
+            "premature": premature, "gross_premature": gross_premature,
             "peak_prob": r["peak"], "peak_t": r["peak_t"]})
 
     def ap_at(tau):
@@ -234,6 +325,16 @@ def evaluate(model, clips, threshold, cutoffs=(0.5, 1.0, 1.5), confirm=3,
         "mean_lead_s": (sum(leads) / len(leads)) if leads else float("nan"),
         "AP": aps,
         "mean_AP": (sum(finite) / len(finite)) if finite else float("nan"),
+        "n_useful_v2": n_useful_v2,
+        "useful_warning_rate_v2": (n_useful_v2 / n_timed) if n_timed else float("nan"),
+        "mean_lead_vs_event_v2": ((sum(leads_event_v2) / len(leads_event_v2))
+                                  if leads_event_v2 else float("nan")),
+        "mean_lead_vs_alert_v2": ((sum(leads_alert_v2) / len(leads_alert_v2))
+                                  if leads_alert_v2 else float("nan")),
+        "frac_premature": (n_premature / n_timed) if n_timed else float("nan"),
+        "median_premature_s": (statistics.median(premature_seconds)
+                               if premature_seconds else float("nan")),
+        "n_gross_premature": n_gross_premature,
     }
     if dump_rows:
         out["rows"] = detail

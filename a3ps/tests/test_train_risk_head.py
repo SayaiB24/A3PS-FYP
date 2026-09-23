@@ -385,3 +385,139 @@ def test_dump_rows_reproduces_aggregates():
     assert untimed["verdict"] == "untimed"
     assert untimed["clip_id"] not in {
         r["clip_id"] for r in rows if r["verdict"] in ("useful", "too_early", "missed", "late")}
+
+    # v2/prematurity aggregates must also be exact readouts of the dump.
+    n_useful_v2 = sum(1 for r in rows if r["verdict_v2"] == "useful")
+    assert n_useful_v2 == dumped["n_useful_v2"]
+    assert (n_useful_v2 / n_timed if n_timed else float("nan")) == pytest.approx(
+        dumped["useful_warning_rate_v2"], nan_ok=True)
+    n_premature = sum(1 for r in rows if r.get("premature") is True)
+    assert (n_premature / n_timed if n_timed else float("nan")) == pytest.approx(
+        dumped["frac_premature"], nan_ok=True)
+    n_gross = sum(1 for r in rows if r.get("gross_premature") is True)
+    assert n_gross == dumped["n_gross_premature"]
+    # v2 can only ever credit a superset of legacy's useful clips.
+    assert n_useful_v2 >= n_useful
+
+
+# ---------------------------------------------------------------------------
+# corrected (episode-based) useful-warning definition
+# -- docs/design/useful_warning_definition.md
+# ---------------------------------------------------------------------------
+
+def test_legacy_numbers_reproduce_committed_checkpoint_bit_for_bit():
+    """The legacy definition must be untouched by the v2/prematurity work.
+
+    Locks in the exact numbers already reported in
+    docs/status/repartition_results.md section 4 for seed 1234 on
+    train_val_v2 at threshold 0.5 / confirm 3, scored from the checkpoint
+    actually committed to the repo -- not a synthetic clip, so this catches a
+    regression the synthetic tests below could miss.
+    """
+    import os
+    import train_risk_head as trh
+    from a3ps.risk.temporal import RiskGRU
+
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    ckpt = os.path.join(root, "notebooks", "models", "risk_gru_k1p0_v2_s1234.pt")
+    feats = os.path.join(root, "data", "features", "train_val_v2")
+    if not (os.path.isfile(ckpt) and os.path.isdir(feats)):
+        pytest.skip("checkpoint or train_val_v2 features not present")
+
+    model, extra = RiskGRU.load(ckpt)
+    clips = trh.load_clips(feats)
+    v = trh.evaluate(model, clips, 0.5, confirm=3)
+
+    assert v["n_timed"] == 103
+    assert v["n_useful"] == 34
+    assert v["n_too_early"] == 63
+    assert v["useful_warning_rate"] == pytest.approx(0.3300970873786408)
+    assert v["false_alarm_rate"] == pytest.approx(0.6666666666666666)
+    assert v["mean_lead_s"] == pytest.approx(2.6963195892805905)
+    assert v["mean_AP"] == pytest.approx(0.6295955829547311)
+
+
+def test_v2_credits_an_alert_that_spans_the_whole_window():
+    """An alert confirmed before alert_t and never dropped, spanning the whole
+    window, must score useful under v2 and too_early under legacy -- this is
+    exactly the clip-1013 case documented in early_firing_diagnosis.md."""
+    import torch
+    import train_risk_head as trh
+
+    t = torch.arange(60, dtype=torch.float32) * 0.1   # 0.0 .. 5.9s
+    alert_t, event_t = 3.0, 4.0
+    # Hot (logit +10 -> prob ~1) for the WHOLE window and slightly before it,
+    # confirmed well ahead of alert_t; quiet elsewhere.
+    logits = torch.full((60,), -10.0)
+    logits[20:45] = 10.0   # t=2.0 .. 4.4, covers [alert_t=3.0, event_t=4.0]
+
+    class _M:
+        def eval(self): return self
+        def __call__(self, X): return logits
+
+    clip = {"clip_id": "spanning", "X": torch.zeros(60, D), "t": t, "label": 1,
+           "alert_time_s": alert_t, "event_time_s": event_t}
+    v = trh.evaluate(_M(), [clip], threshold=0.5, confirm=5, dump_rows=True)
+    row = v["rows"][0]
+
+    assert row["verdict"] == "too_early"       # legacy: first crossing < alert_t
+    assert row["verdict_v2"] == "useful"       # v2: the window IS covered
+    assert row["premature"] is True            # earliest episode is before alert_t
+    assert v["n_useful"] == 0
+    assert v["n_useful_v2"] == 1
+
+
+def test_v2_does_not_credit_an_alert_entirely_before_the_window():
+    """A spike that decays back down before alert_t must stay not-useful under
+    BOTH definitions (legacy calls this too_early rather than missed, since it
+    DID fire -- just not inside the window), and must be counted premature."""
+    import torch
+    import train_risk_head as trh
+
+    t = torch.arange(60, dtype=torch.float32) * 0.1
+    alert_t, event_t = 3.0, 4.0
+    logits = torch.full((60,), -10.0)
+    logits[5:12] = 10.0    # t=0.5..1.1, well before alert_t=3.0, and it drops
+
+    class _M:
+        def eval(self): return self
+        def __call__(self, X): return logits
+
+    clip = {"clip_id": "early_spike", "X": torch.zeros(60, D), "t": t, "label": 1,
+           "alert_time_s": alert_t, "event_time_s": event_t}
+    v = trh.evaluate(_M(), [clip], threshold=0.5, confirm=5, dump_rows=True)
+    row = v["rows"][0]
+
+    assert row["verdict"] == "too_early"     # legacy: fired, but before alert_t
+    assert row["verdict_v2"] == "missed"     # v2: the window itself was never covered
+    assert row["premature"] is True
+    assert row["gross_premature"] is True    # >5s early AND in first 20% of the clip
+    assert v["n_useful"] == 0
+    assert v["n_useful_v2"] == 0
+
+
+def test_v2_does_not_credit_an_alert_entirely_after_the_event():
+    """A confirmed alert firing only after event_t must not be useful under
+    either definition."""
+    import torch
+    import train_risk_head as trh
+
+    t = torch.arange(60, dtype=torch.float32) * 0.1
+    alert_t, event_t = 1.0, 2.0
+    logits = torch.full((60,), -10.0)
+    logits[40:50] = 10.0   # t=4.0..4.9, well after event_t=2.0
+
+    class _M:
+        def eval(self): return self
+        def __call__(self, X): return logits
+
+    clip = {"clip_id": "late_fire", "X": torch.zeros(60, D), "t": t, "label": 1,
+           "alert_time_s": alert_t, "event_time_s": event_t}
+    v = trh.evaluate(_M(), [clip], threshold=0.5, confirm=5, dump_rows=True)
+    row = v["rows"][0]
+
+    assert row["verdict"] == "late"
+    assert row["verdict_v2"] == "missed"
+    assert row["premature"] is False
+    assert v["n_useful"] == 0
+    assert v["n_useful_v2"] == 0
