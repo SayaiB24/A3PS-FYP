@@ -571,6 +571,14 @@ def train(model, train_clips, val_clips, args, on_improve=None, on_epoch=None):
         # to whatever is available.
         score = val["useful_warning_rate"]
         fa = val["false_alarm_rate"]
+        # Opt-in (default off, so every existing run/selection is unchanged):
+        # an epoch whose mean AP is near chance is not eligible to be `best`.
+        # Step 10.6 uses this to get a valid seed-1238 ensemble member, since
+        # the degenerate-checkpoint flag alone only reports, never reselects.
+        if (getattr(args, "skip_near_chance_epochs", False)
+                and not (val["mean_AP"] == val["mean_AP"]
+                         and val["mean_AP"] >= near_chance_ap)):
+            score = float("nan")
         ok_fa = fa == fa and fa <= args.fa_target
         rank = (1 if ok_fa else 0, score if score == score else -1.0,
                 -(fa if fa == fa else 1.0))
@@ -703,6 +711,9 @@ def main():
                    help="Alert threshold used when scoring.")
     p.add_argument("--confirm", type=int, default=3,
                    help="Consecutive frames over threshold before alerting.")
+    p.add_argument("--skip-near-chance-epochs", action="store_true",
+                   help="Make epochs with near-chance mean AP ineligible for "
+                        "checkpoint selection (default off; see train()).")
     p.add_argument("--seed", type=int, default=1234)
     p.add_argument("--out", default=None, help="Checkpoint path (.pt).")
     p.add_argument("--history-json", default=None)
