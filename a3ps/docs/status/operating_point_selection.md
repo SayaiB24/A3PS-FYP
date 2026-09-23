@@ -1,9 +1,12 @@
-# Operating-point selection: the rule has zero survivors (2026-09-23)
+# Operating-point selection: a documented near-miss (2026-09-23)
 
-`data/features/eval_v2` was **not read** to produce this document. **No
-operating point is selected. No dashboard was rebuilt.** Per the task's hard
-rule, this document stops after Section 1 and reports rather than relaxing
-any gate.
+`data/features/eval_v2` was **not read** to produce this document.
+
+**Status: the documented rule has zero survivors (Section 1). By explicit
+instruction, this document proceeds anyway with a NEAR-MISS configuration —
+seed 1234 at threshold 0.70 / confirm 8 — for the dashboard rebuild and
+sanity check (Sections 3–4). This is not the rule succeeding. Every place
+this configuration's numbers appear below states the shortfall plainly.**
 
 ## 1. Full three-seed grid, v2 definition
 
@@ -109,11 +112,110 @@ consistent ordering rather than one lucky cell, since seed 1234 is also ahead
 at most nearby thresholds in its own grid (thr 0.70/confirm 3 → 0.699, thr
 0.70/confirm 5 → 0.689 — both also close to 0.70 and both still short).
 
-## What this document does not do
+## 2. Proceeding on a documented near-miss, by explicit instruction
 
-Per the task's hard rule: **zero survivors means this document does not
-proceed to Sections 2–4.** No configuration is selected, no runner-up is
-named as a selection, `build_dashboard_demo.py` was not run,
-`data/features/eval_v2` was not read. Reported here for you to decide the
-next step, rather than relaxing a gate, picking the closest miss as a de
-facto selection, or otherwise deciding on your behalf.
+Zero survivors was reported and the decision was handed up rather than made
+here. The instruction received back: proceed with **seed 1234 at threshold
+0.70 / confirm 8** for the dashboard rebuild and sanity check, with the
+shortfall recorded plainly rather than treated as met.
+
+**`useful_warning_rate_v2 = 0.612` against the rule's `≥ 0.70` floor — a gap
+of 0.088, not closed.** This configuration does **not** satisfy the
+documented selection rule. It is being carried forward as a demonstration
+and interim configuration, not as a validated result.
+
+### Why the 0.70 floor itself is untrusted, not just the miss
+
+The `≥ 0.70` useful-warning floor comes from `KAPPA_RETRAIN.md`'s original
+decision rule, written **before**:
+
+- the partition fix (Step 6 — `data/nexar/index.csv`'s split was redrawn
+  after `label_window_audit.md` found the original eval split held every
+  clip with a window over 2.97 s, biasing every prior number toward
+  easier positives),
+- the useful-warning metric fix (Step 8 — the legacy first-crossing
+  definition could score a clip that warned continuously through the whole
+  actionable window identically to one that never warned at all), and
+- the checkpoint-selection fallback fix (Step 9 — the training loop could
+  silently keep a chance-level epoch when no epoch met `fa_target`).
+
+The 0.70 floor was never independently re-validated as achievable, or even as
+the right number, under any of those three corrected conditions — it is a
+number carried over from a measurement regime three fixes removed from this
+one. **Missing it now is not the same claim as failing a floor that was set
+under fair, current conditions and validated as reachable.** It may still be
+the right floor; it has simply never been checked against a fair regime, and
+that absence of validation is itself part of why this is being treated as a
+near-miss worth investigating rather than a hard failure.
+
+## 3. Multi-seed check at the selected cell (thr 0.70 / confirm 8)
+
+The 0.088 gap is smaller than the cross-seed spread already observed at
+comparable operating points in `selection_fix_and_tradeoff.md` (population sd
+0.10–0.12 on `useful_warning_rate_v2` across seeds at fixed hyperparameters).
+A single seed cannot distinguish "0.612 is representative" from "0.612 was a
+lucky draw" when the measurement noise is comparable to the gap being
+measured. Two more seeds (1237, 1238) were trained with **identical
+hyperparameters** to seed 1234's run (kappa 1.0, pre-alert-weight 0.5,
+pos-weight 1.0, fa-target 0.20, epochs 30, patience 8, batch-size 8, hidden
+64/layers 1, `train_core_v2` → `train_val_v2`) and scored at this exact cell.
+
+| seed | best epoch | fa_target_met | fallback_used | val mean AP | useful_v2 @ thr 0.70/c8 | FA | lead_vs_event_v2 |
+|---|---|---|---|---|---|---|---|
+| 1234 | 4 | False | False | 0.630 | 0.612 | 0.196 | 1.83 |
+| 1235 | 13 | False | False | 0.590 | 0.495 | 0.137 | 1.27 |
+| 1236 | 6 | False | True | 0.648 | 0.864 | 0.431 | 2.54 |
+| 1237 | 4 | False | False | 0.580 | 0.388 | 0.078 | 1.13 |
+| **1238** | **1** | **True** | **False** | **0.490** | **0.107** | 0.029 | 1.01 |
+
+**All five: mean 0.493, range 0.107–0.864, population sd 0.250.**
+
+### Seed 1238 needs a separate flag: it appears to be a chance-level
+checkpoint the Step 9 fix does not catch
+
+Seed 1238's selected epoch (epoch 1) has **mean AP 0.490 — at or below chance
+(0.502) on this validation set.** This is the exact failure pattern Step 9
+fixed for seed 1236 (an under-trained epoch mistaken for a good one) — except
+here it is **not** caught by that fix, because epoch 1 happened to meet
+`fa_target` on the *primary* selection rule (FA 0.127 ≤ 0.20 at the training
+loop's threshold 0.5/confirm 3 scoring point). The near-chance fallback
+(`docs/status/selection_fix_and_tradeoff.md` §1) only activates when **no**
+epoch ever meets `fa_target` — it was never designed to catch a compliant
+epoch that is itself near-chance, because meeting the FA gate was treated as
+sufficient evidence of a legitimate result. Seed 1238 shows that assumption
+does not always hold. **This is flagged, not fixed, here** — fixing it is out
+of this task's scope and would need its own investigation (the same kind of
+"stop and ask" moment as Steps 8 and 9's mid-task corrections), not a
+same-task patch.
+
+Excluding seed 1238 as an apparent-degenerate outlier rather than a
+representative draw:
+
+**Four seeds (1234/1235/1236/1237): mean 0.590, range 0.388–0.864, population
+sd 0.177.**
+
+Both statistics are reported because the honest answer is that seed 1238's
+status is itself ambiguous — a near-chance checkpoint could be a real,
+if unlucky, draw from the same training-noise distribution as the others, not
+necessarily a bug to be excluded by fiat. Excluding it is a judgment call, not
+an established fact.
+
+### What this means for interpreting the near-miss
+
+The 4-seed mean (0.590, excluding the apparent outlier) sits **below**
+0.612 — the single-seed figure that produced the 0.088 gap is *not* an
+unlucky low draw; if anything it is slightly above the more representative
+mean. Combined with the full 5-seed sample's much lower mean (0.493) and very
+wide spread (sd 0.250, more than double the earlier 4-seed estimate this
+document opened with), **the single-seed 0.612 understates how much
+uncertainty actually surrounds this cell.** A useful-warning figure anywhere
+from roughly 0.11 to 0.86 has been observed at the identical hyperparameters
+and identical operating point, differing only by training seed. **Step 11's
+single eval read at this configuration should be read against that spread,
+not against 0.612 as if it were a stable number.**
+
+## 4. Dashboard rebuild and sanity check
+
+See below. Per instruction, the seed-1234 checkpoint is used regardless of
+what the multi-seed check shows, since it is already trained and available
+and is the configuration explicitly authorized to proceed.
