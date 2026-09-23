@@ -27,6 +27,8 @@ explicitly.
 | Answer a tricky implementation question | [`design/QnA.md`](design/QnA.md) | Q&A form, mostly Phases I–III |
 | Run the GPU-side dataset/extraction work | [`runbooks/GPU_PHASE4.md`](runbooks/GPU_PHASE4.md) | Current GPU runbook |
 | Set up the two-laptop workflow | [`runbooks/GPU_HANDOFF.md`](runbooks/GPU_HANDOFF.md) | Env setup current; its task list is pre-pivot |
+| See the capacity and feature-ablation results | [`status/ablations.md`](status/ablations.md) | Ablation numbers are **invalid** (bug, fixed) — read the banner |
+| Know why Kalman/img-space/etc are still the defaults, and the rerun ablation numbers | [`status/pivot_open_questions.md`](status/pivot_open_questions.md) | Answers with file:line evidence, not restated config |
 | Find measured numbers from the old system | [`status/results.md`](status/results.md) | ⚠️ pre-pivot throughout |
 | Read the long-form project narrative | [`design/explanation.md`](design/explanation.md) | ⚠️ pre-pivot throughout |
 
@@ -81,6 +83,8 @@ paths. See §5.
 | doc | currency |
 |---|---|
 | [`TODO.md`](status/TODO.md) | ✅ Header + Part B current. Part A is a pre-pivot record, marked as such. |
+| [`ablations.md`](status/ablations.md) | ✅ Capacity result (current). ⚠️ Its "not yet re-run" banner is now stale — the fix was verified and the four ablations rerun; see [`pivot_open_questions.md`](status/pivot_open_questions.md) §4 for the current numbers. |
+| [`pivot_open_questions.md`](status/pivot_open_questions.md) | ✅ Current (2026-09-22). Seq2Seq-vs-Kalman, BEV calibration, and the ablation rerun, investigated with file:line evidence. |
 | [`results.md`](status/results.md) | ⚠️ **Pre-pivot throughout.** Every number is the old threshold system. |
 
 ---

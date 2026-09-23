@@ -29,7 +29,7 @@ python -m venv ..\.venv
 ..\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
-pytest -q                       # expect: 164 passed
+pytest -q                       # expect: 171 passed
 ```
 
 All tests are CPU-only and need no data or model weights, so this is the fastest
@@ -112,7 +112,7 @@ video ─▶ perception+tracking (one fused YOLOv8-Seg model.track() call)
 | ~30 GB disk (if using the full Nexar dataset) | raw video clips | — |
 | Free Groq API key (optional) | only for the optional LLM explanation enrichment | https://console.groq.com/keys |
 
-A CPU-only machine works for **development and unit tests** (all 164 tests are
+A CPU-only machine works for **development and unit tests** (all 171 tests are
 CPU-only and data-free), but real clip processing / mining / eval runs need
 the GPU machine.
 
@@ -163,7 +163,7 @@ The `.env` file is gitignored on purpose; never commit a real key.
 python -m pytest -q
 ```
 
-Expect **90 passed**. These are all CPU-only and data-free (synthetic
+Expect **171 passed**. These are all CPU-only and data-free (synthetic
 fixtures) — if this fails, fix the environment before touching data.
 
 Quick real-inference smoke test (auto-downloads `yolov8s-seg.pt` ~23 MB on

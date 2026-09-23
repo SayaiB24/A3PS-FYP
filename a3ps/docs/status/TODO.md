@@ -28,7 +28,7 @@ it against the old system. Full reproduction steps:
 | mean lead time | 1.67 s | ✗ short of 2–6 s — **the open gap** |
 | mean AP | 0.680 (0.785 / 0.697 / 0.557 @ 500/1000/1500 ms) | ceiling; threshold cannot raise it |
 | too-early alerts | 1/60 | ✅ |
-| tests | 170 passing | — |
+| tests | 171 passing | — |
 
 **vs the old threshold system**, same frozen split (`eval/phase4_comparison.md`):
 
@@ -219,8 +219,11 @@ field learns it. See [`../handoff/CHALLENGES.md`](../handoff/CHALLENGES.md) §6.
 
 Summarised in "Status at a glance" above; full detail in the handoff docs.
 
-- [ ] **Kappa retrain** to fix lead time — [`../handoff/KAPPA_RETRAIN.md`](../handoff/KAPPA_RETRAIN.md).
-- [ ] **Regenerate the paper tables** against the learned head (`eval_anticipation.py`, then `collect_paper_stats.py`).
+- [x] ~~**Kappa retrain** to fix lead time~~ — done 2026-08-19; did not fix it ([`../handoff/KAPPA_RETRAIN.md`](../handoff/KAPPA_RETRAIN.md)).
+- [x] ~~**Regenerate the paper tables** against the learned head~~ — done 2026-08-19 (`eval/anticipation.md`, `eval/paper_stats_summary.md`, `eval/phase4_comparison.md`).
+- [x] **Capacity check** (`--hidden 128 --layers 2`) — swept: mean AP 0.702 but lead 1.59 s at FA ≤ 0.20, no better than committed. See [`ablations.md`](ablations.md).
+- [ ] **Re-run the four feature ablations** — the logged ones are invalid (validation was not ablated; fixed 2026-09-19). Commands in [`ablations.md`](ablations.md).
+- [ ] **GPU latency for paper Table IV** — `eval/latency_table4.md` has CPU numbers only; not publishable until GPU perception/tracking is measured.
 - [ ] **Groq enrichment** on 2–3 clips + the permissive-prompt before/after pair for Section VII.B. *(Still valid — the explanation layer is unchanged by the pivot.)*
 - [ ] **Decide on the user study** (Section VII.C): run a 15–25-person Likert study, or state the limitation explicitly. *(Still valid; see `../design/metrics.md` §8.)*
 

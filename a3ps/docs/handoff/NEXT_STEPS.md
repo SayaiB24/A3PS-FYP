@@ -16,7 +16,7 @@ system. Reproduce any of it from
 | useful-warning | 0.750 (45/60) |
 | false-alarm | 0.167 ✅ (target ≤ 0.20) |
 | mean lead | 1.67 s (target 2–6 s — **the gap**) |
-| mean AP | 0.680 (0.795 / 0.708 / 0.575 @ 500/1000/1500 ms) |
+| mean AP | 0.680 (0.785 / 0.697 / 0.557 @ 500/1000/1500 ms) |
 
 ## What is already done
 
