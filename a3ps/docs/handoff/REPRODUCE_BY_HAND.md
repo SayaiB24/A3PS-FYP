@@ -16,17 +16,31 @@ Read [`NEXT_STEPS.md`](NEXT_STEPS.md) for what to do next,
 Everything below reproduces this. If your numbers differ, something in the
 config differs — check §7.
 
+> **The numbers in this section are selection-biased and superseded.** Every
+> checkpoint here was early-stopped on the frozen eval split and the operating
+> point was chosen there too, so 0.750 was selected on the test set rather than
+> measured against it. See [`../status/eval_leakage_audit.md`](../status/eval_leakage_audit.md)
+> for the evidence and [`../status/clean_protocol_results.md`](../status/clean_protocol_results.md)
+> for the honest held-out number, which is **useful-warning 0.633 at FA 0.200**.
+> The table below is retained for the record. §4–5 reproduce the *clean*
+> protocol, not this one.
+
 | quantity | value | where it lives |
 |---|---|---|
 | training clips | 1,365 (685 pos / 680 neg) | `data/features/train_all/` |
 | held-out eval clips | 120 (60 pos / 60 neg), **frozen** | `data/features/eval/` |
 | **checkpoint** | `risk_gru_k1p0.pt` — kappa 1.0, best epoch 8, 34,465 params | `notebooks/models/` |
 | **committed operating point** | **threshold 0.60, confirm 8** | `eval/kappa_comparison.md` |
-| useful-warning @ operating point | **0.750** (45/60) | `eval/operating_point_sweep_k1p0.md` |
-| false-alarm @ operating point | **0.167** ✅ (target ≤ 0.20) | `eval/operating_point_sweep_k1p0.md` |
+| useful-warning @ operating point | **0.750** (45/60) — *selection-biased* | `eval/operating_point_sweep_k1p0.md` |
+| false-alarm @ operating point | **0.167** — *selection-biased* | `eval/operating_point_sweep_k1p0.md` |
 | mean lead @ operating point | 1.67 s (target 2–6 s — **not met**) | `eval/operating_point_sweep_k1p0.md` |
 | mean AP (500/1000/1500 ms) | 0.680 (0.785 / 0.697 / 0.557) | `eval/train_log_k1p0.txt` |
 | too-early alerts | 1/60 | `eval/operating_point_sweep_k1p0.md` |
+
+**Clean-protocol equivalent** (`risk_gru_k1p0_clean.pt`, trained on
+`train_core`, selected on `train_val`, thr 0.70 / confirm 8, single eval read):
+useful-warning **0.633** (38/60), false-alarm **0.200**, mean lead 1.62 s, mean
+AP 0.661.
 
 **Against the old threshold system** on the same frozen split
 (`eval/phase4_comparison.md`): useful-warning **0.050 → 0.750**, false alarms
@@ -173,15 +187,36 @@ Copy-Item data\features\train_neg\*.npz data\features\train_all\
 (Get-ChildItem data\features\train_all\*.npz | Measure-Object).Count
 ```
 
+Now split `train_all` into the set you train on and the set you select on. This
+is not optional: `--val-features` drives early stopping and best-epoch choice,
+so pointing it at `data/features/eval` *selects* on the held-out split and the
+final number stops being held out. That is what earlier runs of this recipe did
+— see [`../status/eval_leakage_audit.md`](../status/eval_leakage_audit.md).
+`train_risk_head.py` now refuses it.
+
+```powershell
+python scripts/carve_train_val.py --frac 0.15 --seed 1234
+# expect train_val 205 clips (103 pos / 102 neg), train_core 1160 (582 / 578)
+```
+
+The carve is idempotent-by-refusal: once `train_val` is in
+`eval/split_freeze.json` the script will not re-draw it, because re-drawing
+would move clips between the validation and training sets.
+
 ```powershell
 python scripts/train_risk_head.py `
-    --features data/features/train_all --val-features data/features/eval `
+    --features data/features/train_core --val-features data/features/train_val `
     --kappa 1.0 --pre-alert-weight 0.5 --pos-weight 1.0 --fa-target 0.20 `
     --epochs 30 --patience 8 --batch-size 8 --seed 1234 `
-    --out notebooks/models/risk_gru_k1p0.pt `
-    --history-json eval/risk_gru_history_k1p0.json *>&1 `
-    | Tee-Object eval/train_log_k1p0.txt
+    --out notebooks/models/risk_gru_k1p0_clean.pt `
+    --history-json eval/risk_gru_history_k1p0_clean.json *>&1 `
+    | Tee-Object eval/train_log_k1p0_clean.txt
 ```
+
+> The superseded command trained on `data/features/train_all` and validated on
+> `data/features/eval`, producing `risk_gru_k1p0.pt`. Its numbers are retained
+> in [`../status/results.md`](../status/results.md) for the record, but they are
+> selection-biased; do not reproduce it.
 
 **Runtime ~45 s/epoch; ~12 min for a full run**, less when early stopping fires (ours stopped at epoch 16 of 30). The forward pass is batched — see §8.
 
@@ -215,11 +250,31 @@ Free, because `threshold`/`confirm` are applied after the model runs.
 
 ```powershell
 python scripts/sweep_operating_point.py `
-    --checkpoint notebooks/models/risk_gru_k1p0.pt `
-    --features data/features/eval `
+    --checkpoint notebooks/models/risk_gru_k1p0_clean.pt `
+    --features data/features/train_val `
     --thresholds 0.5,0.6,0.7,0.8,0.9 --confirms 3,5,8 `
-    --out eval/operating_point_sweep_k1p0.md
+    --out eval/operating_point_sweep_k1p0_clean_val.md
 ```
+
+`--features` is required and has no default. It used to default to
+`data/features/eval`, which is how the committed operating point came to be
+chosen on the held-out split without anyone passing a flag. Choosing a
+threshold is selection, so it happens on `train_val`.
+
+Once the checkpoint **and** the operating point are fixed, score the held-out
+split exactly once, with the flag that says you know what you are doing:
+
+```powershell
+python scripts/sweep_operating_point.py `
+    --checkpoint notebooks/models/risk_gru_k1p0_clean.pt `
+    --features data/features/eval --final-eval-report `
+    --thresholds <chosen-thr> --confirms <chosen-confirm> `
+    --out eval/final_eval_read_k1p0_clean.md
+```
+
+If that number disappoints, the honest move is to report it. Going back to
+re-pick the epoch, threshold, confirm or seed and scoring again rebuilds exactly
+the bias this protocol removes.
 
 How to read the result:
 
