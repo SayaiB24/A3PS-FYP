@@ -15,9 +15,16 @@ those formulations do NOT have is a ground-truth "when did this become visible"
 annotation, so they ramp all the way back to frame 0.
 
 Nexar gives us one. ``time_of_alert`` is the annotated earliest actionable
-moment, and it sits a measured 2.97-4.47 s before ``time_of_event`` (mean 3.49,
-sd 0.40 over the 65 local positives). So the ramp can start where the dataset
-says the hazard became actionable, instead of where our window-picking guessed.
+moment. So the ramp can start where the dataset says the hazard became
+actionable, instead of where our window-picking guessed.
+
+The 2.97-4.47 s / mean 3.49 s figure once quoted here was measured over the
+project's first 65 local positives -- later found to be exactly the 65
+longest-window clips in the full dataset, not a representative sample
+(``docs/status/label_window_audit.md``). Over the real ~745-positive pool the
+window is continuous with mean ~1.60 s, median ~1.43 s, range 0.03-4.47 s; see
+``mean_alert_lead_s()`` below for the runtime equivalent, which measures
+whatever population is actually loaded rather than assuming this figure.
 
 The weighting
 -------------
@@ -326,3 +333,40 @@ def expected_lead_time(alert_t: float, event_t: float,
     # E[1-u] with density proportional to exp(k(u-1)) on u in [0, 1].
     mean_u = 1.0 / (1.0 - math.exp(-k)) - 1.0 / k
     return span * (1.0 - mean_u)
+
+
+# Fallback only: used when a caller has no positive clips on hand to measure
+# from directly (e.g. an empty split). Prefer `mean_alert_lead_s(clips)`,
+# which measures the real population instead of assuming one.
+#
+# This used to be a single hardcoded 3.49, "measured over the 65 local
+# positives" -- the old hand-truncated eval split that held only the 65
+# longest-window clips in the dataset (`docs/status/label_window_audit.md`
+# Sec 2). Over the real 745-positive pool the mean window is ~1.60s, not
+# 3.49s; a caller reporting "requested lead" against 3.49 overstates the
+# window the loss is actually keyed to by more than 2x.
+FALLBACK_MEAN_ALERT_LEAD_S = 1.60
+
+
+def mean_alert_lead_s(clips) -> float:
+    """Mean ``event_time_s - alert_time_s`` over a clip list's real positives.
+
+    ``clips`` is the ``load_clips()`` list from ``scripts/train_risk_head.py``:
+    dicts with ``label``, ``event_time_s`` and ``alert_time_s``. Diagnostic
+    tools (``compare_kappa.py``, ``train_risk_head.py``'s startup banner) use
+    this, rather than a fixed constant, to report what lead the loss is
+    actually asking for on whatever population is actually loaded -- the
+    population differs by split (`train_core_v2` vs `eval_v2` vs an ad hoc
+    checkpoint list) and by project era (the pool grew 65 -> 745 positives),
+    so a constant measured once goes stale as soon as either changes.
+    """
+    windows = [
+        float(c["event_time_s"]) - float(c["alert_time_s"])
+        for c in clips
+        if c.get("label") == 1
+        and c.get("event_time_s") is not None
+        and c.get("alert_time_s") is not None
+    ]
+    if not windows:
+        return FALLBACK_MEAN_ALERT_LEAD_S
+    return sum(windows) / len(windows)

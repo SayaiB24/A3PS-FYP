@@ -56,6 +56,7 @@ from a3ps.risk.anticipation_loss import (  # noqa: E402
     expected_lead_time,
     find_alert_episodes,
     first_alert_time,
+    mean_alert_lead_s,
 )
 from a3ps.risk.temporal import RiskGRU, assert_causal, count_parameters  # noqa: E402
 
@@ -796,9 +797,10 @@ def main():
     assert_causal(model, D)
     print(f"RiskGRU hidden={args.hidden} layers={args.layers} "
           f"params={count_parameters(model):,} (causality check passed)")
+    mean_lead_s = mean_alert_lead_s(clips)
     print(f"loss: kappa={args.kappa} pre_alert_weight={args.pre_alert_weight} "
-          f"-> asks for a warning ~{expected_lead_time(0.0, 3.49, args.kappa):.2f}s "
-          f"before impact on a mean-lead clip\n")
+          f"-> asks for a warning ~{expected_lead_time(0.0, mean_lead_s, args.kappa):.2f}s "
+          f"before impact on a mean-{mean_lead_s:.2f}s-window clip\n")
 
     # Placeholder until train() returns the real value below. checkpoint_extra
     # reads this by closure (Python resolves free variables at call time, not

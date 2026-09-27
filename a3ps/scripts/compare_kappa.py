@@ -35,12 +35,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import torch  # noqa: E402
 
-from a3ps.risk.anticipation_loss import expected_lead_time  # noqa: E402
+from a3ps.risk.anticipation_loss import (  # noqa: E402
+    expected_lead_time,
+    mean_alert_lead_s,
+)
 from a3ps.risk.temporal import RiskGRU  # noqa: E402
 
 from train_risk_head import _fmt, evaluate, load_clips  # noqa: E402
-
-MEAN_ALERT_LEAD_S = 3.49        # measured over the 65 local positives
 
 
 def sweep_checkpoint(path, clips, thresholds, confirms):
@@ -74,7 +75,9 @@ def main():
     if not clips:
         raise SystemExit(f"no features in {args.features}")
     n_pos = sum(1 for c in clips if c["label"] == 1)
-    print(f"scoring {len(clips)} clips ({n_pos} pos) from {args.features}\n")
+    mean_lead_s = mean_alert_lead_s(clips)
+    print(f"scoring {len(clips)} clips ({n_pos} pos) from {args.features} "
+          f"(mean alert-to-event window {mean_lead_s:.2f}s)\n")
 
     results = []
     for path in args.checkpoints:
@@ -129,13 +132,15 @@ def main():
         "`kappa` sets how sharply the anticipation loss concentrates weight just "
         "before the event. A large kappa asks for a late warning, which quietly "
         "turns an anticipation objective into a detection one — the *requested "
-        "lead* column is what the loss is actually optimising for.",
+        "lead* column is what the loss is actually optimising for, computed "
+        f"against this run's own mean alert-to-event window ({mean_lead_s:.2f}s "
+        f"over {n_pos} positives in `{args.features}`), not an assumed constant.",
         "",
         "| kappa | requested lead | best passing row | useful | FA | **mean lead** | mean AP |",
         "|---|---|---|---|---|---|---|",
     ]
     for r in sorted(results, key=lambda r: (r["kappa"] is None, r["kappa"] or 0)):
-        req = (f"{expected_lead_time(0.0, MEAN_ALERT_LEAD_S, float(r['kappa'])):.2f} s"
+        req = (f"{expected_lead_time(0.0, mean_lead_s, float(r['kappa'])):.2f} s"
                if r["kappa"] is not None else "—")
         if r["pick"]:
             pk = r["pick"]

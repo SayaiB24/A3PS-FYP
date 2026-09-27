@@ -25,8 +25,10 @@ from a3ps.risk.anticipation_loss import (  # noqa: E402
     alert_weights,
     anticipation_loss,
     batch_anticipation_loss,
+    FALLBACK_MEAN_ALERT_LEAD_S,
     expected_lead_time,
     first_alert_time,
+    mean_alert_lead_s,
 )
 from a3ps.risk.temporal import RiskGRU, assert_causal, count_parameters  # noqa: E402
 
@@ -84,6 +86,17 @@ def test_expected_lead_time_shrinks_as_kappa_grows():
     assert lo > hi, "a sharper kappa asks for a later warning"
     assert expected_lead_time(TA, TE, kappa=0.0) == pytest.approx((TE - TA) / 2.0)
     assert expected_lead_time(19.0, 19.0) == 0.0
+
+
+def test_mean_alert_lead_measures_positives_only():
+    clips = [
+        {"label": 1, "event_time_s": 19.0, "alert_time_s": 17.0},
+        {"label": 1, "event_time_s": 12.0, "alert_time_s": 11.0},
+        {"label": 0, "event_time_s": 30.0, "alert_time_s": 0.0},
+        {"label": 1, "event_time_s": None, "alert_time_s": 5.0},
+    ]
+    assert mean_alert_lead_s(clips) == pytest.approx(1.5)
+    assert mean_alert_lead_s([]) == FALLBACK_MEAN_ALERT_LEAD_S
 
 
 # ---------------------------------------------------------------------------
