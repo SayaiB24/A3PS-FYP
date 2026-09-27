@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>A3PS Results</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="style.css?v=3" />
+</head>
+<body>
+  <header class="top">
+    <h1>A3PS results <span>· read-only view of pipeline artifacts</span></h1>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-view="live" aria-selected="true">Live replay</button>
+      <button role="tab" data-view="compare" aria-selected="false">Compare runs</button>
+      <button role="tab" data-view="history" aria-selected="false">History</button>
+      <button role="tab" data-view="drill" aria-selected="false">Drill-down</button>
+    </nav>
+    <span class="spacer"></span>
+    <span id="status" class="muted" style="font-size:12px"></span>
+    <button id="theme-btn" class="iconbtn" title="Toggle light/dark">◐ theme</button>
+  </header>
+
+  <!-- One filter row; every view below re-renders against the same slice. -->
+  <section class="filters" aria-label="Filters">
+    <div class="fgroup">
+      <label class="lbl" for="f-date-preset">Run date</label>
+      <select id="f-date-preset">
+        <option value="all">all time</option>
+        <option value="7">last 7 days of runs</option>
+        <option value="30">last 30 days of runs</option>
+        <option value="90">last 90 days of runs</option>
+        <option value="custom">custom…</option>
+      </select>
+      <input type="date" id="f-date-from" class="hidden" aria-label="from" />
+      <input type="date" id="f-date-to" class="hidden" aria-label="to" />
+    </div>
+    <div class="fgroup" id="f-family" aria-label="Run family">
+      <label class="lbl">Family</label>
+    </div>
+    <div class="fgroup">
+      <label class="lbl" for="f-split">Split</label>
+      <select id="f-split"><option value="">any</option></select>
+    </div>
+    <div class="fgroup">
+      <label class="lbl" for="f-clip">Clip</label>
+      <input type="search" id="f-clip" placeholder="clip id…" />
+    </div>
+    <div class="fgroup">
+      <label class="lbl" for="f-thr">Risk ≥</label>
+      <input type="range" id="f-thr" min="0" max="1" step="0.05" value="0.70" />
+      <span id="f-thr-val" class="range-val num">0.70</span>
+    </div>
+    <div class="fgroup">
+      <label class="lbl">Class</label>
+      <details class="classes" id="f-classes">
+        <summary id="f-classes-sum">all</summary>
+        <div class="pop" id="f-classes-pop"></div>
+      </details>
+    </div>
+  </section>
+
+  <main>
+    <!-- ================= LIVE (legacy-style player + simulator) ================= -->
+    <section class="view active" id="view-live">
+      <div class="card live-bar">
+        <div class="row-inline">
+          <label class="muted" for="lv-clip">clip</label>
+          <select id="lv-clip" class="lv-select"><option value="">loading…</option></select>
+          <span id="lv-badge" class="system-badge hidden"></span>
+          <span class="spacer"></span>
+          <span class="layers" style="margin:0">
+            <b class="muted" style="font-size:11px">VIDEO</b>
+            <label><input type="checkbox" data-lv="labels" checked /> labels</label>
+            <label><input type="checkbox" data-lv="masks" checked /> masks</label>
+            <label><input type="checkbox" data-lv="boxes" /> boxes</label>
+            <label><input type="checkbox" data-lv="trails" checked /> trails</label>
+            <label><input type="checkbox" data-lv="predictions" checked /> predictions</label>
+            <label><input type="checkbox" data-lv="corridor" checked /> corridor</label>
+          </span>
+        </div>
+      </div>
+
+      <div class="live-grid">
+        <div class="pane">
+          <div class="pane-head"><b>Dashcam</b><span class="muted">pipeline overlay</span>
+            <span class="spacer"></span><span id="lv-frame" class="muted num">frame –</span></div>
+          <div class="stage" id="lv-stage">
+            <video id="lv-video" playsinline muted preload="auto"></video>
+            <canvas id="lv-canvas"></canvas>
+            <div id="lv-vig" class="vignette hidden"></div>
+            <div id="lv-banner" class="banner hidden"></div>
+            <div id="lv-msg" class="stage-msg hidden"></div>
+          </div>
+        </div>
+        <div class="pane">
+          <div class="pane-head"><b>Simulator</b>
+            <select id="lv-simmode" aria-label="camera">
+              <option value="chase">3D chase camera</option>
+              <option value="top">top-down</option>
+            </select>
+            <span class="spacer"></span>
+            <span class="layers" style="margin:0">
+              <label><input type="checkbox" data-lv="sim-forecast" checked /> forecast</label>
+              <label><input type="checkbox" data-lv="sim-zone" checked /> risk zone</label>
+              <label><input type="checkbox" data-lv="sim-labels" checked /> labels</label>
+            </span></div>
+          <div class="stage sim-stage">
+            <canvas id="lv-sim"></canvas>
+            <div id="lv-vig2" class="vignette hidden"></div>
+            <div id="lv-banner2" class="banner hidden"></div>
+            <div id="lv-hud" class="sim-hud"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="transport live-transport">
+        <button class="iconbtn" id="lv-back" title="back 1 s (Shift+←)">◀◀</button>
+        <button class="iconbtn" id="lv-prev" title="previous alert (p)">⏮ alert</button>
+        <button class="iconbtn" id="lv-play" title="play/pause (space)">▶</button>
+        <button class="iconbtn" id="lv-next" title="next alert (n)">alert ⏭</button>
+        <button class="iconbtn" id="lv-fwd" title="forward 1 s (Shift+→)">▶▶</button>
+        <input type="range" id="lv-scrub" min="0" max="1000" value="0" aria-label="scrub" />
+        <select id="lv-speed" aria-label="speed">
+          <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+          <option value="1" selected>1×</option><option value="2">2×</option>
+        </select>
+        <span id="lv-time" class="num muted" style="font-size:12px">0.00 / 0.00 s</span>
+      </div>
+
+      <div class="live-lower">
+        <div class="card">
+          <h2>Risk timeline</h2>
+          <p class="sub">Learned head (GRU) scene risk. Click to seek. Triangles mark its alert and virtual brake; the dashed vertical line is the dataset's <code>time_of_alert</code>, the solid one the impact.</p>
+          <div id="lv-timeline"></div>
+        </div>
+        <div class="card">
+          <h2>Event log</h2>
+          <p class="sub">Click an event to watch it happen, in both panes.</p>
+          <ul id="lv-log" class="evlog"></ul>
+        </div>
+      </div>
+      <p class="sub" id="lv-note" style="margin-top:10px"></p>
+    </section>
+
+    <!-- ================= COMPARE ================= -->
+    <section class="view" id="view-compare">
+      <div class="grid side">
+        <div class="card">
+          <div class="card-head"><h2>Runs</h2><span class="spacer"></span>
+            <button class="iconbtn" id="cmp-clear" title="Deselect all">clear</button></div>
+          <p class="sub">Tick 2+ runs to overlay them. Colour stays with the run while it is selected.</p>
+          <div id="runlist" class="runlist"></div>
+        </div>
+        <div>
+          <div class="card">
+            <div class="card-head"><h2>Comparison set</h2>
+              <span class="sub" style="margin:0">checkbox = show/hide · dropdown = which evaluation record to plot</span></div>
+            <div id="cmp-legend" class="legend"></div>
+            <div id="cmp-split-warn" class="note warn hidden"></div>
+            <div id="cmp-empty" class="empty-state">Select runs on the left to compare them.</div>
+          </div>
+          <div class="grid cols-2" id="cmp-charts" style="margin-top:16px">
+            <div class="card">
+              <div class="card-head"><h2>Headline metrics</h2><span class="spacer"></span>
+                <button class="iconbtn" data-table="ch-metrics">table</button></div>
+              <p class="sub">Rates on one 0–1 axis. <i>derived</i> = clip-level, computed here from per-clip rows.</p>
+              <div id="ch-metrics"></div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h2>Lead time before impact</h2><span class="spacer"></span>
+                <button class="iconbtn" data-table="ch-lead">table</button></div>
+              <p class="sub">Seconds. Learned runs: <code>mean_lead_s</code>. Baselines: <code>mTTA_s</code>, which rewards alarming arbitrarily early.</p>
+              <div id="ch-lead"></div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h2>Training curves</h2><span class="spacer"></span>
+                <select id="ch-train-metric">
+                  <option value="val_useful">val useful-warning rate</option>
+                  <option value="val_false_alarm">val false-alarm rate</option>
+                  <option value="val_mean_AP">val mean AP</option>
+                  <option value="train_loss">train loss</option>
+                </select>
+                <button class="iconbtn" data-table="ch-train">table</button></div>
+              <p class="sub">Per epoch from <code>eval/risk_gru_history_*.json</code>. Ring = selected (best) epoch.</p>
+              <div id="ch-train"></div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h2>Operating-point trade-off</h2><span class="spacer"></span>
+                <button class="iconbtn" data-table="ch-op">table</button></div>
+              <p class="sub">Every stored threshold × confirm cell. Ring = the eval record chosen in the legend. Dashed line = FA target 0.20.</p>
+              <div id="ch-op"></div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h2>Precision–recall</h2><span class="spacer"></span>
+                <button class="iconbtn" data-table="ch-pr">table</button></div>
+              <p class="sub">Derived: clips ranked by whole-clip <code>peak_prob</code>. Only evaluations with stored per-clip rows can draw this.</p>
+              <div id="ch-pr"></div>
+            </div>
+            <div class="card">
+              <h2>Confusion matrices</h2>
+              <p class="sub">Derived, clip-level: “fired” = the decision rule fired anywhere in the clip.</p>
+              <div id="ch-cm"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= HISTORY ================= -->
+    <section class="view" id="view-history">
+      <div class="card">
+        <div class="card-head"><h2>Run-over-run history</h2><span class="spacer"></span>
+          <select id="hist-metric"></select>
+          <select id="hist-source">
+            <option value="selection_val">checkpoint validation record</option>
+            <option value="headline">headline evaluation</option>
+          </select>
+          <button class="iconbtn" data-table="ch-hist">table</button></div>
+        <p class="sub">Runs in the order their artifacts were first committed. One line per evaluation split,
+          because a number on eval (v1) and one on eval_v2 are not the same measurement.</p>
+        <div id="ch-hist"></div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h2>All runs</h2>
+        <p class="sub">Click a row to add the run to the comparison set.</p>
+        <div class="tablewrap" style="max-height:none"><table class="data" id="hist-table"></table></div>
+      </div>
+    </section>
+
+    <!-- ================= DRILL-DOWN ================= -->
+    <section class="view" id="view-drill">
+      <div class="card">
+        <div class="card-head"><h2>Per-clip breakdown</h2><span class="spacer"></span>
+          <label class="muted" for="drill-eval" style="font-size:12px">evaluation</label>
+          <select id="drill-eval"></select></div>
+        <p class="sub" id="drill-sub"></p>
+        <div class="tiles" id="drill-tiles"></div>
+        <div class="row-inline" id="drill-oc"></div>
+      </div>
+      <div class="grid cols-2" style="margin-top:16px">
+        <div class="card">
+          <div class="card-head"><h2>Clip scores</h2><span class="spacer"></span>
+            <button class="iconbtn" data-table="ch-strip">table</button></div>
+          <p class="sub">Whole-clip <code>peak_prob</code> by label. Dashed line = the Risk ≥ filter. Click a dot to open the clip.</p>
+          <div id="ch-strip"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2 id="clip-title">Clip</h2><span class="spacer"></span>
+            <button class="btn-primary hidden" id="clip-open-replay">Open in live replay ▸</button></div>
+          <div id="clip-info" class="empty-state">Pick a clip from the table or the score chart.</div>
+          <div id="ch-tracks"></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h2>Clips</h2>
+        <p class="sub" id="drill-count"></p>
+        <div class="tablewrap" style="max-height:480px"><table class="data" id="drill-table"></table></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="tooltip" class="tooltip hidden" role="tooltip"></div>
+  <script type="module" src="js/app.js?v=3"></script>
+</body>
+</html>
