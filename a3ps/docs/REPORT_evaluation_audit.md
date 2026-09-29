@@ -208,8 +208,10 @@ of 750. "Redrawing the split fixed *who gets the long-window clips*; it did not
 create more of them" (`repartition_results.md` §6).
 
 **Not fixed by this step:** the hard-coded 3.49 in `compare_kappa.py:43` and
-`train_risk_head.py:800` is still in the tree as of this report; the status
-documents record it as a deferred item.
+`train_risk_head.py:800` was still in the tree when this report was written.
+*Update: fixed afterwards in commit `3a4b349`. Both callers now compute the mean
+window from the loaded clips (`mean_alert_lead_s()` in `anticipation_loss.py`).
+Diagnostic output only; no scored number changed.*
 
 ### 2.3 The metric could not tell "warned throughout" from "never warned" (Steps 7–8)
 
@@ -667,9 +669,10 @@ small; it is not zero, and I have not seen it quantified.
 **Things not redone.** Feature ablations and the capacity check were not redone
 under the clean protocol (§3.4). The 15 `dev` clips have no extracted features
 and were not part of any of this. The hard-coded `MEAN_ALERT_LEAD_S = 3.49`
-remains in `compare_kappa.py:43` and `train_risk_head.py:800`, so the
-"requested lead" column of `eval/kappa_comparison.md` is still stated against the
-wrong population. And the source documents describe one dataset, one
+in `compare_kappa.py:43` and `train_risk_head.py:800` has since been fixed
+(`3a4b349`), but the committed "requested lead" column of
+`eval/kappa_comparison.md` predates the fix and stays stated against the wrong
+population until that table is regenerated. And the source documents describe one dataset, one
 annotation set (Nexar's own `time_of_alert`), one architecture (a 64-unit GRU on
 112-dimensional features).
 

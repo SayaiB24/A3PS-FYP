@@ -1,1 +1,4 @@
 .venv 
+
+# Paper drafts stay local, never pushed
+A3PS_paper*.docx

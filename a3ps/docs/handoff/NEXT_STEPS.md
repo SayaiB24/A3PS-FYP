@@ -3,136 +3,124 @@
 Ordered by priority. Each step states what it costs, what machine it needs, what
 "done" looks like, and how to tell it went wrong.
 
-**Current state (all committed):** the learned risk head is trained on 1,365
-clips and validated on the frozen 120-clip eval split, with a chosen operating
-point and a dashboard that shows the improvement against the old threshold
-system. Reproduce any of it from
-[`REPRODUCE_BY_HAND.md`](REPRODUCE_BY_HAND.md).
+> **Rewritten 2026-09-29.** The previous version of this file described the
+> superseded v1 state (`risk_gru_k1p0.pt`, 0.750 at FA 0.167, selected on the
+> test set) and its §1 training command validated on `data/features/eval`,
+> the exact leak `../status/eval_leakage_audit.md` documents. That content is in
+> git history. For the week before judging, [`JUDGES_PREP_PLAN.md`](JUDGES_PREP_PLAN.md)
+> Part 3 is the day-by-day plan; this file is the order of work after it.
 
-| where you are | value |
+## Where the project stands
+
+| quantity | value |
 |---|---|
-| checkpoint | `notebooks/models/risk_gru_k1p0.pt` (kappa 1.0, best epoch 8) |
-| operating point | threshold 0.60, confirm 8 |
-| useful-warning | 0.750 (45/60) |
-| false-alarm | 0.167 ✅ (target ≤ 0.20) |
-| mean lead | 1.67 s (target 2–6 s — **the gap**) |
-| mean AP | 0.680 (0.785 / 0.697 / 0.557 @ 500/1000/1500 ms) |
+| checkpoint | `notebooks/models/risk_gru_k1p0_v2_selfix_s1234.pt` (34,465 params, kappa 1.0, `pre_alert_weight` 0.5, seed 1234) |
+| training / selection data | `train_core_v2` 1,160 clips (582 / 578), `train_val_v2` 205 (103 / 102) |
+| held-out | `eval_v2`, 120 clips (60 / 60), frozen in `eval/split_freeze_v2.json` |
+| operating point | threshold 0.70, confirm 8 (chosen on `train_val_v2`) |
+| useful-warning | **0.650** (39/60, v2 episode-based) / 0.317 (19/60, legacy) |
+| false-alarm | **0.167** (10/60) — target ≤ 0.20 met as a point estimate (95% CI ≈ 0.09–0.28) |
+| mean lead | 1.51 s (target 2–6 s — **not met**) |
+| mean AP | 0.646 (0.735 / 0.642 / 0.561 @ 0.5 / 1.0 / 1.5 s) |
+| gross-premature | 0 |
+| `eval_v2` reads | **one spent**, at most one more, ever |
+
+Full story and error bars: [`../REPORT_evaluation_audit.md`](../REPORT_evaluation_audit.md).
 
 ## What is already done
 
-Nothing below needs redoing. Per-item detail in
-[`../status/TODO.md`](../status/TODO.md).
-
 | area | state |
 |---|---|
-| Split freeze + drift guards | ✅ done |
-| Dataset indexed (1,500 labelled clips) | ✅ done — 685 pos / 680 neg train, 60+60 frozen eval |
-| Feature extraction (the only GPU step) | ✅ done — 1,485 clips, 10 Hz, 0 failures, ego motion on all |
-| Learned head trained | ✅ done — kappa 1.0, best epoch 8 |
-| Operating point chosen | ✅ done — 0.60/8, FA target met |
-| **Kappa sweep** | ✅ **done — did NOT fix lead time** (see below) |
-| **Batched forward pass** | ✅ done — 6.14× faster, gradients verified |
-| **FA-aware checkpoint selection** | ✅ done |
-| Metric bugs fixed (AP ties, invented window) | ✅ done |
-| Paper tables regenerated | ✅ done — incl. `eval/phase4_comparison.md` |
-| Dashboard old-vs-new comparison | ✅ done — 6 demo clips |
-| Handoff documentation | ✅ done |
-| **Lead time ≥ 2 s** | ⬜ **still open — step 1 below** |
+| Split freeze + drift guards, held-out refusal in train/sweep | ✅ |
+| Feature extraction, 1,485 clips, 10 Hz, ego motion on all | ✅ |
+| v2 partition (window-stratified), fixed selector, v2 metric | ✅ |
+| Single `eval_v2` read | ✅ 0.650 / 0.167 |
+| Kappa sweep | ✅ no effect on AP (flat within 0.004) |
+| Ensemble + temperature calibration | ✅ no gain beyond noise |
+| Capacity (h128, h256) | ✅ no gain beyond noise |
+| Seq2Seq-LSTM forecaster end to end | ✅ tie on coverage, 0.56 s less lead; Kalman stays |
+| GPU latency re-timing | ✅ 61.9 ms/frame perception+tracking on RTX 3050 Laptop |
+| `dashboard_v2` | ✅ committed; manual QA open |
+| Feature ablations under the clean protocol | ⬜ `JUDGES_PREP_PLAN.md` §3.2 |
+| Simple baselines (single feature, logistic regression) | ⬜ `JUDGES_PREP_PLAN.md` §3.2 |
+| **Lead time ≥ 2 s** | ⬜ **open — step 1 below** |
 
 ---
 
-## 1. Close the lead-time gap  ⭐ top priority
+## 1. Lead time: change the objective, not the model  ⭐ top priority
 
-**Mean lead is 1.67 s against a 2–6 s target.** This is the only unmet target.
+**Mean lead is 1.51 s against a 2–6 s target.** Five levers that act on the model
+(kappa, ensemble, calibration, capacity, forecaster) left it where it is, and the
+reason is structural: `alert_weights()` gives the loss **zero positive signal
+outside `[alert_t, event_t]`**, and that window averages ~1.6 s on this dataset
+(`REPORT_evaluation_audit.md` §5.3). The model is never asked to warn earlier.
 
-**Kappa is exhausted as a lever.** The sweep
-([`KAPPA_RETRAIN.md`](KAPPA_RETRAIN.md), `eval/kappa_comparison.md`) tried
-kappa ∈ {0.5, 1.0, 2.0, 3.0}: lead moved only 1.59–1.67 s and **mean AP stayed
-flat within 0.004**. A parameter that changes only *when* the model fires leaving
-discrimination unmoved means the ceiling is capacity or features, not the loss.
+Next candidate: an objective that rewards warning before `alert_t` (a decaying
+positive ramp before it, or event-time-keyed exponential weighting). Details and
+risks in [`FUTURE_WORK.md`](FUTURE_WORK.md) Tier 1.
 
-Next candidates, cheapest first — training is now ~4 min per run:
+**Protocol, unchanged:** train on `train_core_v2`, select on `train_val_v2`,
+compare with `scripts/rescore_candidates_both_defs.py` (both definitions, same
+selection rule). Never compare against the `useful` column of an
+`operating_point_sweep_*.md`, which is the legacy definition.
 
-1. **More capacity** — `--hidden 128 --layers 2`, then `--hidden 256`. ~15 min for both. 34,465 params against 1,365 clips may simply be underfitting, and mean AP 0.680 is the number to move. Watch for overfitting: the best epoch already lands around 8 of 30.
-2. **Longer feature window** — features are 13 s at 10 Hz, so lead time is mechanically bounded by how much run-up the model can see. `--window-s 20` needs a full GPU re-extraction (~4 h) and makes results incomparable with everything above unless the eval split is re-extracted too.
-3. **Better features** — see [`FUTURE_WORK.md`](FUTURE_WORK.md).
-
-```powershell
-python scripts/train_risk_head.py `
-    --features data/features/train_all --val-features data/features/eval `
-    --kappa 1.0 --hidden 128 --layers 2 --fa-target 0.20 `
-    --epochs 40 --patience 8 --batch-size 8 --seed 1234 `
-    --out notebooks/models/risk_gru_h128.pt `
-    --history-json eval/risk_gru_history_h128.json *>&1 `
-    | Tee-Object eval/train_log_h128.txt
-
-python scripts/sweep_operating_point.py `
-    --checkpoint notebooks/models/risk_gru_h128.pt --features data/features/eval `
-    --thresholds 0.5,0.6,0.7,0.8 --confirms 3,5,8 `
-    --out eval/operating_point_sweep_h128.md
-```
-
-**Done when:** either a checkpoint reaches lead ≥ 2 s at FA ≤ 0.20 and useful
-≥ 0.70, or you have shown that capacity does not move mean AP either — which
-would make "this feature set supports ~1.7 s of warning" the honest finding.
+**Done when:** a candidate reaches v2 lead ≥ 2 s on `train_val_v2` at FA ≤ 0.20
+with zero gross-premature and `frac_premature` no worse than the baseline's, and
+holds up across at least three seeds. **Went wrong if:** lead rises but
+`frac_premature` or `n_gross_premature` rises with it. That is the old threshold
+engine's failure mode coming back.
 
 ---
 
-## 2. Write the numbers up
+## 2. Get an external number: Kaggle submission
 
-**No compute; the most important step.**
-
-**Quote:**
-- useful-warning **0.750 at FA 0.167** — always paired. The useful-warning rate alone is meaningless: 0.833 is available on the same checkpoint at FA 0.300.
-- **The old-vs-new comparison**, which is the real headline (`eval/phase4_comparison.md`): useful-warning 0.050 → 0.750, false alarms 0.767 → 0.167, mean AP 0.546 → 0.680.
-- mean AP 0.680 as the threshold-free measure of discrimination.
-
-**State plainly:**
-- Lead time (1.67 s) does not meet the 2–6 s target, and the kappa sweep showed the loss weighting is not the cause.
-- The old system's *higher* raw detection rate (0.917 vs 0.750) reflects that it alerted on 46 of 60 negatives, not better detection.
-- The two systems are scored under different observation conditions (13 s @ 10 Hz vs full clips @ 30 Hz) — see step 3.
-
-**Do not:**
-- Quote any latency figure without naming the machine (CPU/GPU differ ~20–40× here).
-- Quote numbers from `../status/results.md` or `../design/explanation.md` — both pre-pivot. See [`../INDEX.md`](../INDEX.md) §4.
+**~9 h GPU extraction + ~2 h.** The only way to get a new held-out number without
+spending the last `eval_v2` read, and the only number nobody could accuse us of
+mis-scoring. It also answers "how do you compare with published work?" See
+[`FUTURE_WORK.md`](FUTURE_WORK.md) Tier 1.
 
 ---
 
-## 3. Make the old-vs-new comparison strict
+## 3. Decide how to spend the last `eval_v2` read
 
-**~1 h GPU + minutes CPU.** Currently the learned head is scored on 13 s windows
-at 10 Hz while the threshold system is scored on full ~40 s clips at 30 Hz. The
-useful-warning and AP gains are large enough to survive that mismatch, but the
-lead-time comparison is not defensible across it.
+**Minutes to decide; do it in writing, before running anything.** Two legitimate
+uses, pick at most one:
 
-To fix: re-run the threshold pipeline restricted to the same 13 s windows and
-score both on identical observations. Until then, quote the useful-warning and AP
-improvements rather than the lead-time difference.
+- a genuinely better single config from step 1, locked on `train_val_v2` first, or
+- a multi-seed report of the **same locked recipe** (mean ± sd over 5 seeds). That
+  replaces a single draw with a distribution, which the paper promises.
 
----
-
-## 4. Optional improvements
-
-Only after 1–3. Details in [`FUTURE_WORK.md`](FUTURE_WORK.md). Capacity and the
-longer window are listed under step 1 instead, since they target the open gap.
-
-| idea | cost | why |
-|---|---|---|
-| Kaggle submission on the 1,344 unlabelled test clips | ~2 h | external unbiased AP — the only number here nobody could accuse us of mis-scoring |
-| ReID appearance arm | ~1 day | deferred from v1; needs `onnxruntime`, changes association |
-| Per-actor temporal head | ~2 days | current head pools over actors, so it cannot attribute risk to one — the dashboard's actor colour is scene-level for this reason |
-| BEV per-clip calibration | ~1 day | metric distances instead of pixel stand-ins; interpretability, no headline metric |
-| User study | weeks | or state the absence as an explicit limitation |
+`final_eval_read.py` refuses to overwrite its own output. Don't work around it.
 
 ---
 
-## 5. Housekeeping
+## 4. Make the old-vs-new comparison strict
+
+**~1 h GPU + minutes CPU.** The threshold engine has only been scored on the
+superseded split, on full clips at 30 Hz. Re-run it on the same 13 s windows as the
+learned head. On `train_val_v2` this costs no read budget. Until then the paper's
+"No comparable baseline yet" limitation stands, and `eval/phase4_comparison.md`
+(0.050 → 0.750) **must not be quoted**: it is on the v1 split with the
+selection-biased model.
+
+---
+
+## 5. Optional improvements
+
+Everything else is in [`FUTURE_WORK.md`](FUTURE_WORK.md), tiered: per-actor head,
+feature attribution, seed-variance reduction, real-time path, ReID, BEV
+calibration, cross-dataset evaluation, CI.
+
+---
+
+## 6. Housekeeping
 
 - **Do not re-run `prepare_nexar.py` without `--freeze`.** It re-draws the held-out split and silently invalidates every number.
-- **Do not delete `data/nexar/videos/`** — it holds all 60 held-out eval positives.
-- **`data/features/`** is gitignored. Back it up: it is ~32 MB and cost ~3.5 h of GPU to produce. `features_full.zip` in the repo root is that backup.
-- **Demo `raw.mp4` files are gitignored** — re-run `build_dashboard_demo.py` after a fresh clone to recreate them.
-- **The eval split freeze (`eval/split_freeze.json`) is committed and must stay that way.** It is what makes every number in this project comparable to every other.
+- **Do not delete `data/nexar/videos/`.** It holds the held-out positives.
+- **`data/features/`** is gitignored. Back it up. `features_full.zip` in the repo root (2026-08-19) holds all 1,485 Kalman-feature clips in the v1 directory layout (`train_pos`, `train_neg`, `eval`). The v2 directories are the same files regrouped per `eval/split_freeze_v2.json` (no re-extraction; see `../status/repartition_results.md` §3). It does **not** include the `_seq2seq` features (~10 GPU-hours to regenerate).
+- **Demo `raw.mp4` files are gitignored.** Re-run `build_dashboard_demo.py` after a fresh clone, **with** `--checkpoint notebooks/models/risk_gru_k1p0_v2_selfix_s1234.pt --features data/features/train_val_v2 --threshold 0.70 --confirm 8`. The script's defaults still point at the superseded v1 model and pool (`JUDGES_PREP_PLAN.md` §1.12).
+- **Both split freezes (`eval/split_freeze.json`, `eval/split_freeze_v2.json`) are committed and must stay that way.**
+- **`REPRODUCE_BY_HAND.md` stops at the v1 clean protocol.** Bringing it up to the v2 partition (repartition → train with the fixed selector → one-shot read) is owed; the banner at its top points to the status docs that hold the v2 commands meanwhile.
 
 ---
 
@@ -140,14 +128,12 @@ longer window are listed under step 1 instead, since they target the open gap.
 
 | what | path |
 |---|---|
-| how to reproduce everything | [`REPRODUCE_BY_HAND.md`](REPRODUCE_BY_HAND.md) |
-| kappa sweep runbook | [`KAPPA_RETRAIN.md`](KAPPA_RETRAIN.md) |
+| current result, full story | [`../REPORT_evaluation_audit.md`](../REPORT_evaluation_audit.md) |
+| the held-out read | [`../status/final_eval_read.md`](../status/final_eval_read.md), `eval/final_eval_read_v2_s1234.json` |
+| what was tried to improve it | [`../status/headline_number_attempts.md`](../status/headline_number_attempts.md), `eval/candidates_both_definitions.md` |
+| trained checkpoint | `notebooks/models/risk_gru_k1p0_v2_selfix_s1234.pt` |
+| training history | `eval/risk_gru_history_k1p0_v2_selfix_s1234.json` |
+| operating-point grid (v2 definition) | `figures/fig_operating_point_data.json` |
+| clean demo clips | 621, 206, 630, 932, 1426, 1564 ([`../status/instability_and_checkpoint_audit.md`](../status/instability_and_checkpoint_audit.md) §3) |
 | problems solved, for the thesis | [`CHALLENGES.md`](CHALLENGES.md) |
 | optional future work | [`FUTURE_WORK.md`](FUTURE_WORK.md) |
-| metric definitions and how to read them | [`../design/metrics.md`](../design/metrics.md) |
-| trained checkpoint | `notebooks/models/risk_gru_k1p0.pt` (kappa 1.0) |
-| training log / curve | `eval/train_log_k1p0.txt`, `eval/risk_gru_history_k1p0.json` |
-| operating-point grid | `eval/operating_point_sweep_k1p0.md` |
-| kappa sweep results | `eval/kappa_comparison.md` |
-| old-vs-new headline | `eval/phase4_comparison.md` |
-| dashboard comparison data | `dashboard/clips/<id>/risk.json` |

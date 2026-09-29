@@ -17,12 +17,15 @@ explicitly.
 |---|---|---|
 | Get the project running from nothing | [`runbooks/execution.md`](runbooks/execution.md) — quick start | 3 paths: tests only, dashboard, full reproduction |
 | Know what to do next | [`handoff/NEXT_STEPS.md`](handoff/NEXT_STEPS.md) | Priority-ordered, with a done/remaining table |
-| Reproduce a committed number | [`handoff/REPRODUCE_BY_HAND.md`](handoff/REPRODUCE_BY_HAND.md) | Every command + the exact config that produced it |
-| Improve the model | [`handoff/KAPPA_RETRAIN.md`](handoff/KAPPA_RETRAIN.md) | The one prioritised improvement, standalone |
+| Prepare for judging (this week) | [`handoff/JUDGES_PREP_PLAN.md`](handoff/JUDGES_PREP_PLAN.md) | Day-by-day plan, clean demo clips, Q&A prep |
+| Reproduce a committed number | [`handoff/REPRODUCE_BY_HAND.md`](handoff/REPRODUCE_BY_HAND.md) | ⚠️ v1 partition up to the clean protocol; its banner points to the v2 steps |
+| Improve the model | [`handoff/NEXT_STEPS.md`](handoff/NEXT_STEPS.md) §1, [`handoff/FUTURE_WORK.md`](handoff/FUTURE_WORK.md) | Lead time is the open target; the objective, not the model, is the lever. `KAPPA_RETRAIN.md` is history (sweep done, no effect) |
 | Understand a metric, or read a result honestly | [`design/metrics.md`](design/metrics.md) | §9–10 = current system; §1–8 = old |
 | Write up problems solved / lessons | [`handoff/CHALLENGES.md`](handoff/CHALLENGES.md) | 19 entries, thesis-oriented |
 | Pick optional future work | [`handoff/FUTURE_WORK.md`](handoff/FUTURE_WORK.md) | Tiered by value, each with its risk |
 | See the current project status | [`status/TODO.md`](status/TODO.md) | "Status at a glance" at the top |
+| Understand the current architecture | [`new-architecture.md`](new-architecture.md) | The pipeline as it runs today, phase by phase, plus `dashboard_v2` |
+| Run the demo dashboard | `scripts/serve_dashboard_v2.py` → `dashboard_v2/` | Demo clips 621, 206, 630, 932, 1426, 1564 only; see [`handoff/README.md`](handoff/README.md) |
 | Understand how a module works | [`design/logic_pipeline.md`](design/logic_pipeline.md) | Phases I–III current; its Phase 4 is superseded |
 | Answer a tricky implementation question | [`design/QnA.md`](design/QnA.md) | Q&A form, mostly Phases I–III |
 | Run the GPU-side dataset/extraction work | [`runbooks/GPU_PHASE4.md`](runbooks/GPU_PHASE4.md) | Current GPU runbook |
@@ -52,16 +55,17 @@ Generated evaluation output is **not** in `docs/` — it lives in
 [`../eval/`](../eval/), because scripts read and write those files at fixed
 paths. See §5.
 
-### `handoff/` — all current ✅
+### `handoff/` — current, with two exceptions noted below
 
 | doc | purpose |
 |---|---|
-| [`README.md`](handoff/README.md) | Index, current state, the 3 things most likely to trip you up |
-| [`NEXT_STEPS.md`](handoff/NEXT_STEPS.md) | Priority-ordered next actions; done/remaining table |
-| [`REPRODUCE_BY_HAND.md`](handoff/REPRODUCE_BY_HAND.md) | End-to-end reproduction, every command and config value |
-| [`KAPPA_RETRAIN.md`](handoff/KAPPA_RETRAIN.md) | The top-priority improvement, standalone runbook |
+| [`README.md`](handoff/README.md) | ✅ Index, current state (rewritten 2026-09-29), the things most likely to trip you up |
+| [`JUDGES_PREP_PLAN.md`](handoff/JUDGES_PREP_PLAN.md) | ✅ One-week plan before judging, bug record, Q&A prep |
+| [`NEXT_STEPS.md`](handoff/NEXT_STEPS.md) | ✅ Priority-ordered next actions after judging (rewritten 2026-09-29) |
+| [`REPRODUCE_BY_HAND.md`](handoff/REPRODUCE_BY_HAND.md) | ⚠️ Reproduces the v1 partition up to the clean protocol; the v2 steps live in the status docs its banner names |
+| [`KAPPA_RETRAIN.md`](handoff/KAPPA_RETRAIN.md) | ⚠️ History. The kappa sweep is done and did not move mean AP |
 | [`CHALLENGES.md`](handoff/CHALLENGES.md) | 19 problems: symptom → diagnosis → fix → what generalises |
-| [`FUTURE_WORK.md`](handoff/FUTURE_WORK.md) | Optional improvements, tiered, with risks |
+| [`FUTURE_WORK.md`](handoff/FUTURE_WORK.md) | ✅ Optional improvements, tiered, with risks (revised 2026-09-29) |
 
 ### `runbooks/`
 
@@ -92,6 +96,7 @@ paths. See §5.
 | [`label_window_audit.md`](status/label_window_audit.md) | ✅ Current (2026-09-23). Traces the disjoint window to labels.xlsx. |
 | [`clean_protocol_results.md`](status/clean_protocol_results.md) | ⚠️ Superseded (2026-09-23). The honest held-out number under a clean train/val protocol, side by side with the superseded eval-selected one. |
 | [`eval_leakage_audit.md`](status/eval_leakage_audit.md) | ✅ Current (2026-09-22). Read-only audit showing the eval split was used for model and hyperparameter selection. |
+| [`headline_number_attempts.md`](status/headline_number_attempts.md) | ✅ Current (2026-09-29, corrected). Model capacity and the Seq2Seq-LSTM forecaster on `train_val_v2`: neither beats the baseline beyond noise, both warn later; answers `pivot_open_questions.md` §1. First version compared legacy against v2 numbers; re-scored with `scripts/rescore_candidates_both_defs.py`. `eval_v2` not spent. |
 | [`results.md`](status/results.md) | ⚠️ **Pre-pivot throughout.** Every number is the old threshold system. |
 
 ---
@@ -103,16 +108,16 @@ paths. See §5.
 [`handoff/README.md`](handoff/README.md) → [`design/logic_pipeline.md`](design/logic_pipeline.md) skim.
 
 **Continuing the work.**
-[`handoff/README.md`](handoff/README.md) → [`handoff/NEXT_STEPS.md`](handoff/NEXT_STEPS.md) →
-[`handoff/KAPPA_RETRAIN.md`](handoff/KAPPA_RETRAIN.md). Keep
-[`handoff/REPRODUCE_BY_HAND.md`](handoff/REPRODUCE_BY_HAND.md) open for commands.
+[`handoff/README.md`](handoff/README.md) → [`REPORT_evaluation_audit.md`](REPORT_evaluation_audit.md) →
+[`handoff/NEXT_STEPS.md`](handoff/NEXT_STEPS.md) → [`handoff/FUTURE_WORK.md`](handoff/FUTURE_WORK.md). Keep
+[`handoff/REPRODUCE_BY_HAND.md`](handoff/REPRODUCE_BY_HAND.md) open for commands (mind its v1 banner).
 
 **Writing the thesis.**
 [`handoff/CHALLENGES.md`](handoff/CHALLENGES.md) (the methodology story) →
 [`design/metrics.md`](design/metrics.md) §9–10 (what each number means and how to
-read it honestly) → `../eval/operating_point_sweep.md` and `../eval/train_log.txt`
-(the numbers themselves) → [`handoff/NEXT_STEPS.md`](handoff/NEXT_STEPS.md) §3
-(what may and may not be claimed).
+read it honestly) → [`REPORT_evaluation_audit.md`](REPORT_evaluation_audit.md) and
+[`status/final_eval_read.md`](status/final_eval_read.md) (the numbers themselves,
+and what may and may not be claimed).
 **Do not** take numbers from `status/results.md` or `design/explanation.md`
 without checking §4 first.
 
@@ -146,8 +151,8 @@ reading stale prose.** When in doubt, prefer:
 | for | use |
 |---|---|
 | Current metrics and how to read them | [`design/metrics.md`](design/metrics.md) §9–10 |
-| Current numbers | `../eval/operating_point_sweep.md`, `../eval/train_log.txt` |
-| Current status | [`status/TODO.md`](status/TODO.md) header |
+| Current numbers | [`REPORT_evaluation_audit.md`](REPORT_evaluation_audit.md), [`status/final_eval_read.md`](status/final_eval_read.md) |
+| Current status | [`handoff/README.md`](handoff/README.md), [`handoff/NEXT_STEPS.md`](handoff/NEXT_STEPS.md) |
 
 ---
 
@@ -160,8 +165,10 @@ on the next run. Treat it as a result, not a document. Do not hand-edit.
 
 | file | written by | current? |
 |---|---|---|
-| `../eval/operating_point_sweep.md` | `scripts/sweep_operating_point.py` | ✅ learned head |
-| `../eval/train_log.txt`, `../eval/risk_gru_history.json` | `scripts/train_risk_head.py` | ✅ learned head |
+| `../eval/operating_point_sweep*.md` | `scripts/sweep_operating_point.py` | ⚠️ **legacy useful-warning definition only**; the un-suffixed file is the v1 model. Never compare its useful column with a v2 number |
+| `../eval/candidates_both_definitions.md` | `scripts/rescore_candidates_both_defs.py` | ✅ baseline, capacity and LSTM runs under both definitions, `train_val_v2` |
+| `../eval/final_eval_read_v2_s1234.json` | `scripts/final_eval_read.py` | ✅ the single `eval_v2` read |
+| `../eval/train_log*.txt`, `../eval/risk_gru_history*.json` | `scripts/train_risk_head.py` | per run; the headline run is `*_k1p0_v2_selfix_s1234*` |
 | `../eval/assoc_rate_check.md`, `..._check2.md` | `scripts/check_assoc_rate.py` | ✅ 30/10 Hz and 30/15 Hz |
 | `../eval/anticipation.md`, `..._per_clip.csv` | `scripts/eval_anticipation.py` | ⚠️ old system — regenerate (NEXT_STEPS §2) |
 | `../eval/forecast_table.md` | `scripts/eval_forecast.py` | Phase III forecaster (unaffected by the pivot) |
@@ -190,4 +197,4 @@ Sometimes the code is the clearest answer:
 | Why can't the split drift? | `a3ps/common/splits.py` (module docstring) |
 | What does the model architecture look like? | `a3ps/risk/temporal.py` (34,465 params, causality assertion) |
 | What config produced the committed numbers? | the checkpoint itself — `torch.load(...)["extra"]` |
-| What do the dashboard's panels mean? | `dashboard/app.js` (`renderCompare`, `drawCompare`) |
+| What do the dashboard's panels mean? | `dashboard_v2/js/` (current), `dashboard/app.js` (`renderCompare`, `drawCompare`, legacy) |

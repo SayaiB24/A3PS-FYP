@@ -12,7 +12,16 @@ any of it: `../runbooks/execution.md`. For how it works: `../design/logic_pipeli
 
 ---
 
-## Status at a glance (2026-08-19)
+> **⚠️ The "Status at a glance" section below (2026-08-19) is superseded.** Its
+> 0.750 / FA 0.167 headline was selected on the test set. The current result is
+> useful-warning **0.650** (v2) / 0.317 (legacy) at FA **0.167**, lead 1.51 s,
+> mean AP 0.646, on `eval_v2`, read once — see
+> [`../REPORT_evaluation_audit.md`](../REPORT_evaluation_audit.md). For current
+> status and what's next, use [`../handoff/README.md`](../handoff/README.md) and
+> [`../handoff/NEXT_STEPS.md`](../handoff/NEXT_STEPS.md). The section is kept as a
+> record of the v1 state.
+
+## Status at a glance (2026-08-19, superseded)
 
 **Where the project is:** the learned risk head is trained, evaluated on the
 frozen held-out split, has a committed operating point, and the dashboard shows
@@ -73,8 +82,10 @@ FA: useful 0.717 → 0.750, lead 1.58 → 1.67 s.
 
 ### ⬜ Remaining — see [`../handoff/NEXT_STEPS.md`](../handoff/NEXT_STEPS.md)
 
-1. **Lead time still misses target** (1.67 s vs 2–6 s). Kappa is exhausted as a lever. Next candidates in order: **more capacity** (`--hidden 128 --layers 2`, ~15 min now that training is 6× faster), **a longer feature window** (20 s, needs a GPU re-extraction), or **better features**. See [`../handoff/FUTURE_WORK.md`](../handoff/FUTURE_WORK.md) Tier 1.
-2. **Write the numbers up** — quote 0.750 @ FA 0.167, and state that lead time is not met. Never quote a useful-warning rate without the false-alarm rate it was measured at.
+> Items 1–2 below were updated 2026-09-29; the rest of this list is the v1-era record.
+
+1. **Lead time still misses target** (1.51 s on `eval_v2` vs 2–6 s). Kappa, ensembling, calibration, capacity (h128/h256) and the LSTM forecaster have all been tried on `train_val_v2` without moving it (`../status/headline_number_attempts.md`). The remaining lever is the training objective, which gives no signal before `alert_t`. See [`../handoff/NEXT_STEPS.md`](../handoff/NEXT_STEPS.md) §1.
+2. **Write the numbers up** — quote **0.650 (v2) / 0.317 (legacy) @ FA 0.167** on `eval_v2`, and state that the useful-warning and lead-time targets are not met. Never quote a useful-warning rate without the false-alarm rate it was measured at.
 3. **Strict old-vs-new comparison** — the two systems are scored under different observation conditions (13 s @ 10 Hz vs full clips @ 30 Hz). Re-running the threshold system on matched windows would make it exact; until then quote the useful-warning and AP gains (robust to this) rather than the lead-time difference (not).
 4. **Optional** — see [`../handoff/FUTURE_WORK.md`](../handoff/FUTURE_WORK.md): Kaggle submission for an external AP, ReID arm, per-actor head, BEV calibration, user study.
 

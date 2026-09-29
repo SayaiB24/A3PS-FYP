@@ -1,5 +1,18 @@
 # Reproduce and extend A3PS by hand
 
+> **⚠️ Stops one step short of the current result (flagged 2026-09-29).** This
+> file reproduces the v1 partition, up to the *clean-protocol* number (0.633).
+> The current headline (**0.650** at FA **0.167**, `eval_v2`, checkpoint
+> `risk_gru_k1p0_v2_selfix_s1234.pt`, threshold 0.70 / confirm 8) comes from the
+> **v2 partition**, which this file does not cover yet. For the v2 steps, use:
+> splits → [`../status/repartition_results.md`](../status/repartition_results.md)
+> (`scripts/repartition_splits.py`, `eval/split_freeze_v2.json`); training on
+> `train_core_v2` / `train_val_v2` with the fixed selector →
+> [`../status/selection_fix_and_tradeoff.md`](../status/selection_fix_and_tradeoff.md);
+> the one-shot held-out read → [`../status/final_eval_read.md`](../status/final_eval_read.md)
+> (`scripts/final_eval_read.py`). The dataset, extraction, and training
+> implementation sections (§2–3, §8) are still accurate.
+
 End-to-end, raw clips → features → training → operating point → dashboard, with
 every command and every config value that produced the committed numbers. Written
 to be followed without any assistant: nothing here depends on knowledge that is

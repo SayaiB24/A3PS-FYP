@@ -9,6 +9,16 @@ writes eval/forecast_table.md.
 
     python scripts/eval_forecast.py
     python scripts/eval_forecast.py --shards data/trajectories --weights models/seq2seq_v1.pt
+
+--hist-len truncates each stored 10-point history to its last N points before
+calling predict() (both forecasters already handle short histories exactly as
+production does: Kalman just filters over fewer points, Seq2Seq left-pads back
+up to HIST). This reproduces the padded-history condition a real track hits at
+TrackBuffer.ready() (8 pts) instead of the full, contiguous mined window (10
+pts) both models were originally compared on:
+
+    python scripts/eval_forecast.py --weights notebooks/models/seq2seq_v1.pt --hist-len 8 --out eval/forecast_table_hist8.md
+    python scripts/eval_forecast.py --weights notebooks/models/seq2seq_v1.pt --hist-len 9 --out eval/forecast_table_hist9.md
 """
 
 import argparse
@@ -56,10 +66,13 @@ def ade_fde_at(pred, gt, step):
     return ade, fde
 
 
-def run_forecaster(fc, hist_batch):
+def run_forecaster(fc, hist_batch, hist_len=None):
     out = []
     for h in hist_batch:
-        means, _ = fc.predict([list(map(float, p)) for p in h], DT, HORIZON)
+        pts = [list(map(float, p)) for p in h]
+        if hist_len is not None:
+            pts = pts[-hist_len:]      # truncate: what a track has at TrackBuffer.ready()
+        means, _ = fc.predict(pts, DT, HORIZON)
         out.append(means)
     return np.asarray(out, dtype="float32")            # (N, FUT, 2)
 
@@ -69,22 +82,27 @@ def main():
     p.add_argument("--shards", default="data/trajectories")
     p.add_argument("--weights", default="models/seq2seq_v1.pt")
     p.add_argument("--out", default="eval/forecast_table.md")
+    p.add_argument("--hist-len", type=int, default=None,
+                    help="Truncate each history to its last N points before predicting "
+                         "(e.g. 8 or 9), to reproduce the padded-history condition a real "
+                         "track hits at TrackBuffer.ready() instead of the full mined window.")
     args = p.parse_args()
 
     Hva, Fva, space = load_val(args.shards)
     if Hva is None:
         print(f"No shards in {args.shards}. Run scripts/mine_trajectories.py first.")
         return
-    print(f"val windows: {len(Hva)}  (units: {space})")
+    print(f"val windows: {len(Hva)}  (units: {space})"
+          + (f"  [hist_len={args.hist_len}]" if args.hist_len else ""))
 
     results = {}
-    kal_pred = run_forecaster(KalmanCVForecaster(), Hva)
+    kal_pred = run_forecaster(KalmanCVForecaster(), Hva, args.hist_len)
     results["Kalman-CV"] = kal_pred
 
     if os.path.isfile(args.weights):
         from a3ps.forecasting.seq2seq import Seq2SeqForecaster
         results["Seq2Seq-LSTM"] = run_forecaster(
-            Seq2SeqForecaster(weights_path=args.weights), Hva)
+            Seq2SeqForecaster(weights_path=args.weights), Hva, args.hist_len)
     else:
         print(f"  (no weights at {args.weights} -> skipping Seq2Seq; train in Colab first)")
 
@@ -93,7 +111,8 @@ def main():
     header = "| model | " + " | ".join(
         f"ADE@{int(h)}s | FDE@{int(h)}s" for h in HORIZONS_S) + " |"
     sep = "|" + "---|" * (1 + 2 * len(HORIZONS_S))
-    lines = [f"# Forecast eval (val = {len(Hva)} windows, units: {space})", "",
+    hist_note = f", hist_len={args.hist_len} (truncated)" if args.hist_len else ", full 10-pt history"
+    lines = [f"# Forecast eval (val = {len(Hva)} windows, units: {space}{hist_note})", "",
              header, sep]
     print("\n" + header)
     for name, pred in results.items():
